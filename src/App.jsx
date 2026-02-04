@@ -177,8 +177,8 @@ export default function App() {
           <div>
             <p className="eyebrow">Designed for Finance MBAs</p>
             <h1>
-              Everything you need for GMAT/CAT prep and CFA curriculum insights in one
-              personal workspace.
+              GMAT/CAT prep and CFA curriculum insights in one
+              collaborative forum.
             </h1>
             <p className="subtitle">
               Curated question sets inspired by top prep platforms, plus weekly finance blogs,
