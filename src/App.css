@@ -383,6 +383,49 @@ h1 {
   object-fit: cover;
 }
 
+.solution-video {
+  width: 100%;
+  border-radius: 16px;
+  max-height: 360px;
+}
+
+.detail-hero {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 45%, #1d4ed8 100%);
+  color: #f8fafc;
+  padding: 32px 8vw 60px;
+}
+
+.detail-header {
+  max-width: 760px;
+}
+
+.solution-detail-page {
+  padding-top: 40px;
+}
+
+.upload-dropzone {
+  border: 2px dashed #cbd5f5;
+  border-radius: 16px;
+  padding: 16px;
+  display: grid;
+  gap: 8px;
+  color: #475569;
+  background: #f8fafc;
+}
+
+.upload-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: #1d4ed8;
+  color: #ffffff;
+  font-weight: 600;
+  cursor: pointer;
+  width: fit-content;
+}
+
 .blog {
   min-height: 220px;
 }

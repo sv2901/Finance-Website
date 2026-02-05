@@ -127,6 +127,7 @@ const createEmptyQuestionForm = () => ({
   prompt: "",
   solutionText: "",
   solutionImage: "",
+  solutionVideo: "",
   videoUrl: ""
 });
 
@@ -136,8 +137,17 @@ const createEmptyBlogForm = () => ({
   readTime: "",
   solutionText: "",
   solutionImage: "",
+  solutionVideo: "",
   videoUrl: ""
 });
+
+const readFileAsDataUrl = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
 
 export default function App() {
   const [adminId, setAdminId] = useState("");
@@ -152,6 +162,7 @@ export default function App() {
   const [editingBlogId, setEditingBlogId] = useState(null);
   const [solutionView, setSolutionView] = useState(null);
   const [showSolutionDetail, setShowSolutionDetail] = useState(false);
+  const [activePage, setActivePage] = useState("home");
   const [questionStartIndex, setQuestionStartIndex] = useState(0);
   const [blogStartIndex, setBlogStartIndex] = useState(0);
 
@@ -213,6 +224,30 @@ export default function App() {
     setBlogForm((prev) => ({ ...prev, [name]: value }));
   };
 
+  const handleImageUpload = async (file, setForm) => {
+    if (!file) return;
+    const fileData = await readFileAsDataUrl(file);
+    setForm((prev) => ({ ...prev, solutionImage: fileData }));
+  };
+
+  const handleVideoUpload = async (file, setForm) => {
+    if (!file) return;
+    const fileData = await readFileAsDataUrl(file);
+    setForm((prev) => ({ ...prev, solutionVideo: fileData }));
+  };
+
+  const handleDrop = (event, type, setForm) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    if (!file) return;
+    if (type === "image" && file.type.startsWith("image/")) {
+      handleImageUpload(file, setForm);
+    }
+    if (type === "video" && file.type.startsWith("video/")) {
+      handleVideoUpload(file, setForm);
+    }
+  };
+
   const resetQuestionForm = () => {
     setQuestionForm(createEmptyQuestionForm());
     setEditingQuestionId(null);
@@ -235,7 +270,8 @@ export default function App() {
       prompt: questionForm.prompt || "",
       source: "Complexity:",
       solutionText: questionForm.solutionText || "",
-      solutionImage: normalizeUrl(questionForm.solutionImage),
+      solutionImage: questionForm.solutionImage || "",
+      solutionVideo: questionForm.solutionVideo || "",
       videoUrl: normalizeUrl(questionForm.videoUrl)
     };
     if (editingQuestionId) {
@@ -257,7 +293,8 @@ export default function App() {
       readTime: blogForm.readTime || "5 min read",
       source: "Admin upload",
       solutionText: blogForm.solutionText || "",
-      solutionImage: normalizeUrl(blogForm.solutionImage),
+      solutionImage: blogForm.solutionImage || "",
+      solutionVideo: blogForm.solutionVideo || "",
       videoUrl: normalizeUrl(blogForm.videoUrl)
     };
     if (editingBlogId) {
@@ -277,6 +314,7 @@ export default function App() {
       prompt: question.prompt,
       solutionText: question.solutionText || "",
       solutionImage: question.solutionImage || "",
+      solutionVideo: question.solutionVideo || "",
       videoUrl: question.videoUrl || ""
     });
   };
@@ -289,6 +327,7 @@ export default function App() {
       readTime: blog.readTime,
       solutionText: blog.solutionText || "",
       solutionImage: blog.solutionImage || "",
+      solutionVideo: blog.solutionVideo || "",
       videoUrl: blog.videoUrl || ""
     });
   };
@@ -304,11 +343,13 @@ export default function App() {
   const handleOpenSolution = (item, type) => {
     setSolutionView({ ...item, type });
     setShowSolutionDetail(false);
+    setActivePage("detail");
   };
 
   const handleCloseSolution = () => {
     setSolutionView(null);
     setShowSolutionDetail(false);
+    setActivePage("home");
   };
 
   const visibleCards = 3;
@@ -322,6 +363,71 @@ export default function App() {
   const canScrollQuestionsRight = questionStartIndex + visibleCards < questionList.length;
   const canScrollBlogsLeft = blogStartIndex > 0;
   const canScrollBlogsRight = blogStartIndex + visibleCards < blogList.length;
+
+  if (activePage === "detail" && solutionView) {
+    return (
+      <div className="page">
+        <header className="detail-hero">
+          <nav className="nav">
+            <span className="logo">Satya Varta | Finance</span>
+            <div className="nav-links">
+              <button className="btn ghost" type="button" onClick={handleCloseSolution}>
+                ← Back to home
+              </button>
+            </div>
+          </nav>
+          <div className="detail-header">
+            <p className="eyebrow">{solutionView.type === "question" ? "Case Study" : "Insight"}</p>
+            <h1>{solutionView.title}</h1>
+            <p className="subtitle">
+              {solutionView.type === "question" ? solutionView.prompt : solutionView.summary}
+            </p>
+          </div>
+        </header>
+
+        <main>
+          <section className="section solution-detail-page">
+            <div className="solution-card">
+              <button
+                className="btn secondary"
+                type="button"
+                onClick={() => setShowSolutionDetail((prev) => !prev)}
+              >
+                {showSolutionDetail ? "Hide solution" : "See solution"}
+              </button>
+              {showSolutionDetail && (
+                <div className="solution-detail">
+                  {solutionView.solutionImage && (
+                    <img
+                      src={solutionView.solutionImage}
+                      alt="Solution illustration"
+                      className="solution-image"
+                    />
+                  )}
+                  <p className="card-body">{solutionView.solutionText || "Add solution notes."}</p>
+                  {solutionView.solutionVideo && (
+                    <video controls className="solution-video">
+                      <source src={solutionView.solutionVideo} />
+                    </video>
+                  )}
+                  {solutionView.videoUrl && (
+                    <a
+                      className="btn ghost"
+                      href={solutionView.videoUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Watch video solution
+                    </a>
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="page">
@@ -566,57 +672,6 @@ export default function App() {
           </div>
         </section>
 
-        {solutionView && (
-          <section className="section solution">
-            <div className="solution-header">
-              <div>
-                <p className="eyebrow">Solution Workspace</p>
-                <h2>{solutionView.title}</h2>
-                <p className="section-subtitle">
-                  {solutionView.type === "question" ? solutionView.prompt : solutionView.summary}
-                </p>
-              </div>
-              <button className="btn ghost" type="button" onClick={handleCloseSolution}>
-                Close
-              </button>
-            </div>
-            <div className="solution-card">
-              <p className="card-body">
-                {solutionView.type === "question" ? "Question" : "Insight"} overview above.
-              </p>
-              <button
-                className="btn secondary"
-                type="button"
-                onClick={() => setShowSolutionDetail((prev) => !prev)}
-              >
-                {showSolutionDetail ? "Hide solution" : "See solution"}
-              </button>
-              {showSolutionDetail && (
-                <div className="solution-detail">
-                  {solutionView.solutionImage && (
-                    <img
-                      src={solutionView.solutionImage}
-                      alt="Solution illustration"
-                      className="solution-image"
-                    />
-                  )}
-                  <p className="card-body">{solutionView.solutionText || "Add solution notes."}</p>
-                  {solutionView.videoUrl && (
-                    <a
-                      className="btn ghost"
-                      href={solutionView.videoUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Watch video solution
-                    </a>
-                  )}
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-
         <section id="admin" className="section">
           <div className="section-header">
             <div>
@@ -724,17 +779,42 @@ export default function App() {
                   disabled={!isAdmin}
                 />
               </label>
-              <label>
-                Solution image URL (optional)
-                <input
-                  type="text"
-                  name="solutionImage"
-                  value={questionForm.solutionImage}
-                  onChange={handleQuestionChange}
-                  placeholder="https://"
-                  disabled={!isAdmin}
-                />
-              </label>
+              <div
+                className="upload-dropzone"
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => handleDrop(event, "image", setQuestionForm)}
+              >
+                <p>Drag & drop solution image (JPG/PNG) here</p>
+                <label className="upload-button">
+                  Upload image
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg"
+                    onChange={(event) => handleImageUpload(event.target.files?.[0], setQuestionForm)}
+                    disabled={!isAdmin}
+                    hidden
+                  />
+                </label>
+                {questionForm.solutionImage && <span>Image ready</span>}
+              </div>
+              <div
+                className="upload-dropzone"
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => handleDrop(event, "video", setQuestionForm)}
+              >
+                <p>Drag & drop solution video (MP4/WebM) here</p>
+                <label className="upload-button">
+                  Upload video
+                  <input
+                    type="file"
+                    accept="video/mp4,video/webm"
+                    onChange={(event) => handleVideoUpload(event.target.files?.[0], setQuestionForm)}
+                    disabled={!isAdmin}
+                    hidden
+                  />
+                </label>
+                {questionForm.solutionVideo && <span>Video ready</span>}
+              </div>
               <label>
                 Video link (optional)
                 <input
@@ -753,7 +833,9 @@ export default function App() {
 
             <form className="card" onSubmit={handleBlogSubmit}>
               <div className="card-header-row">
-                <h3>{editingBlogId ? "Edit Finance Blog / CFA Insight" : "Upload Finance Blog / CFA Insight"}</h3>
+                <h3>
+                  {editingBlogId ? "Edit Finance Blog / CFA Insight" : "Upload Finance Blog / CFA Insight"}
+                </h3>
                 {editingBlogId && (
                   <button className="btn ghost" type="button" onClick={resetBlogForm}>
                     Cancel edit
@@ -804,17 +886,42 @@ export default function App() {
                   disabled={!isAdmin}
                 />
               </label>
-              <label>
-                Solution image URL (optional)
-                <input
-                  type="text"
-                  name="solutionImage"
-                  value={blogForm.solutionImage}
-                  onChange={handleBlogChange}
-                  placeholder="https://"
-                  disabled={!isAdmin}
-                />
-              </label>
+              <div
+                className="upload-dropzone"
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => handleDrop(event, "image", setBlogForm)}
+              >
+                <p>Drag & drop solution image (JPG/PNG) here</p>
+                <label className="upload-button">
+                  Upload image
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg"
+                    onChange={(event) => handleImageUpload(event.target.files?.[0], setBlogForm)}
+                    disabled={!isAdmin}
+                    hidden
+                  />
+                </label>
+                {blogForm.solutionImage && <span>Image ready</span>}
+              </div>
+              <div
+                className="upload-dropzone"
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => handleDrop(event, "video", setBlogForm)}
+              >
+                <p>Drag & drop solution video (MP4/WebM) here</p>
+                <label className="upload-button">
+                  Upload video
+                  <input
+                    type="file"
+                    accept="video/mp4,video/webm"
+                    onChange={(event) => handleVideoUpload(event.target.files?.[0], setBlogForm)}
+                    disabled={!isAdmin}
+                    hidden
+                  />
+                </label>
+                {blogForm.solutionVideo && <span>Video ready</span>}
+              </div>
               <label>
                 Video link (optional)
                 <input
