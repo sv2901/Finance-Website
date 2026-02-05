@@ -113,7 +113,6 @@ export default function App() {
     topic: "",
     difficulty: "",
     prompt: "",
-    source: "",
     articleUrl: "",
     videoUrl: ""
   });
@@ -121,13 +120,12 @@ export default function App() {
     title: "",
     summary: "",
     readTime: "",
-    source: "",
     articleUrl: "",
     videoUrl: ""
   });
 
-  const adminEmail = import.meta.env.VITE_ADMIN_EMAIL;
-  const adminPassword = import.meta.env.VITE_ADMIN_PASSWORD;
+  const adminEmail = "svgupta4@gmail.com";
+  const adminPassword = "JMg9Yd@2";
 
   const canLogin = useMemo(() => adminId.trim() && adminPin.trim(), [adminId, adminPin]);
 
@@ -156,13 +154,9 @@ export default function App() {
   const handleAdminLogin = (event) => {
     event.preventDefault();
     if (!canLogin) return;
-    if (adminEmail && adminPassword) {
-      if (adminId.trim() === adminEmail && adminPin === adminPassword) {
-        setIsAdmin(true);
-      }
-      return;
+    if (adminId.trim() === adminEmail && adminPin === adminPassword) {
+      setIsAdmin(true);
     }
-    setIsAdmin(true);
   };
 
   const handleLogout = () => {
@@ -192,7 +186,7 @@ export default function App() {
         topic: questionForm.topic || "General",
         difficulty: questionForm.difficulty || "Mixed",
         prompt: questionForm.prompt || "",
-        source: questionForm.source || "Admin upload",
+        source: "Complexity:",
         articleUrl: normalizeUrl(questionForm.articleUrl),
         videoUrl: normalizeUrl(questionForm.videoUrl)
       },
@@ -203,7 +197,6 @@ export default function App() {
       topic: "",
       difficulty: "",
       prompt: "",
-      source: "",
       articleUrl: "",
       videoUrl: ""
     });
@@ -219,7 +212,7 @@ export default function App() {
         title: trimmedTitle,
         summary: blogForm.summary || "",
         readTime: blogForm.readTime || "5 min read",
-        source: blogForm.source || "Admin upload",
+        source: "Admin upload",
         articleUrl: normalizeUrl(blogForm.articleUrl),
         videoUrl: normalizeUrl(blogForm.videoUrl)
       },
@@ -229,7 +222,6 @@ export default function App() {
       title: "",
       summary: "",
       readTime: "",
-      source: "",
       articleUrl: "",
       videoUrl: ""
     });
@@ -415,10 +407,6 @@ export default function App() {
               <span className={isAdmin ? "status active" : "status"}>
                 {isAdmin ? "Admin authenticated" : "Admin access required"}
               </span>
-              <p className="helper">
-                Set VITE_ADMIN_EMAIL and VITE_ADMIN_PASSWORD in .env.local to enforce
-                credentials.
-              </p>
             </div>
           </div>
 
@@ -449,7 +437,7 @@ export default function App() {
             </form>
 
             <form className="card" onSubmit={handleQuestionSubmit}>
-              <h3>Upload GMAT/CAT Question</h3>
+              <h3>Upload Question</h3>
               <label>
                 Title
                 <input
@@ -516,17 +504,6 @@ export default function App() {
                   disabled={!isAdmin}
                 />
               </label>
-              <label>
-                Source Inspiration
-                <input
-                  type="text"
-                  name="source"
-                  value={questionForm.source}
-                  onChange={handleQuestionChange}
-                  placeholder="Inspired by Manhattan Prep"
-                  disabled={!isAdmin}
-                />
-              </label>
               <button className="btn secondary" type="submit" disabled={!isAdmin}>
                 Publish question
               </button>
@@ -589,17 +566,6 @@ export default function App() {
                   disabled={!isAdmin}
                 />
               </label>
-              <label>
-                Source Inspiration
-                <input
-                  type="text"
-                  name="source"
-                  value={blogForm.source}
-                  onChange={handleBlogChange}
-                  placeholder="Inspired by CFA curriculum"
-                  disabled={!isAdmin}
-                />
-              </label>
               <button className="btn secondary" type="submit" disabled={!isAdmin}>
                 Publish insight
               </button>
@@ -630,8 +596,7 @@ export default function App() {
         <div>
           <p className="footer-title">Contact</p>
           <p>
-            Email:{" "}
-            <a href="mailto:svgupta4@gmail.com">Satya Varta</a>
+            Email: svgupta4@gmail.com
           </p>
           <p>
             LinkedIn:{" "}
