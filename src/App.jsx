@@ -150,8 +150,16 @@ const readFileAsDataUrl = (file) =>
   });
 
 
+const getDefaultAnalysisApiUrl = () => {
+  if (typeof window === "undefined") return "http://localhost:8787/api/investment-analysis";
+  const isLocalhost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  return isLocalhost
+    ? "http://localhost:8787/api/investment-analysis"
+    : "/api/investment-analysis";
+};
+
 const ANALYSIS_API_URL =
-  import.meta.env.VITE_ANALYSIS_API_URL?.trim() || "http://localhost:8787/api/investment-analysis";
+  import.meta.env.VITE_ANALYSIS_API_URL?.trim() || getDefaultAnalysisApiUrl();
 
 const createEmptyTransaction = () => ({
   date: "",
@@ -405,7 +413,7 @@ export default function App() {
       }
     ]);
     setAnalysisResult(null);
-    setTransactionDraft(createEmptyTransaction());
+    setTransactionDraft((prev) => ({ ...createEmptyTransaction(), type: prev.type }));
   };
 
   const handleDeleteTransaction = (txnId) => {
@@ -480,7 +488,7 @@ export default function App() {
           </nav>
           <div className="detail-header">
             <p className="eyebrow">Investment Analysis</p>
-            <h1>Rajpur FA style XIRR benchmarking</h1>
+            <h1>Financial Analysis XIRR Benchmarking</h1>
             <p className="subtitle">
               Add purchase and sale cashflows, compute your XIRR, and benchmark against FD,
               Real Estate, BTC, Gold, Silver, and Nifty over the same date range.
