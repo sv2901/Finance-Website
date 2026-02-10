@@ -149,6 +149,16 @@ const readFileAsDataUrl = (file) =>
     reader.readAsDataURL(file);
   });
 
+
+const ANALYSIS_API_URL =
+  import.meta.env.VITE_ANALYSIS_API_URL?.trim() || "http://localhost:8787/api/investment-analysis";
+
+const createEmptyTransaction = () => ({
+  date: "",
+  amount: "",
+  type: "buy"
+});
+
 export default function App() {
   const [adminId, setAdminId] = useState("");
   const [adminPin, setAdminPin] = useState("");
@@ -166,6 +176,11 @@ export default function App() {
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [questionStartIndex, setQuestionStartIndex] = useState(0);
   const [blogStartIndex, setBlogStartIndex] = useState(0);
+  const [transactionDraft, setTransactionDraft] = useState(createEmptyTransaction());
+  const [transactions, setTransactions] = useState([]);
+  const [analysisResult, setAnalysisResult] = useState(null);
+  const [analysisError, setAnalysisError] = useState("");
+  const [isBenchmarkLoading, setIsBenchmarkLoading] = useState(false);
 
   const adminEmail = "svgupta4@gmail.com";
   const adminPassword = "JMg9Yd@2";
@@ -360,6 +375,81 @@ export default function App() {
     }, 0);
   };
 
+  const handleOpenInvestment = () => {
+    setActivePage("investment");
+    setAnalysisError("");
+  };
+
+  const handleBackHome = () => {
+    setActivePage("home");
+  };
+
+  const handleTransactionDraftChange = (event) => {
+    const { name, value } = event.target;
+    setTransactionDraft((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleAddTransaction = (event) => {
+    event.preventDefault();
+    if (!transactionDraft.date || !transactionDraft.amount) return;
+    const numericAmount = Number.parseFloat(transactionDraft.amount);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) return;
+
+    setTransactions((prev) => [
+      ...prev,
+      {
+        id: `txn-${Date.now()}`,
+        date: transactionDraft.date,
+        amount: transactionDraft.type === "buy" ? -numericAmount : numericAmount,
+        type: transactionDraft.type
+      }
+    ]);
+    setAnalysisResult(null);
+    setTransactionDraft(createEmptyTransaction());
+  };
+
+  const handleDeleteTransaction = (txnId) => {
+    setTransactions((prev) => prev.filter((item) => item.id !== txnId));
+    setAnalysisResult(null);
+  };
+
+  const handleRunInvestmentAnalysis = async () => {
+    const orderedTransactions = [...transactions].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+
+    if (orderedTransactions.length < 2) {
+      setAnalysisError("Add at least one purchase and one sale transaction.");
+      return;
+    }
+
+    setAnalysisError("");
+    setIsBenchmarkLoading(true);
+
+    try {
+      const response = await fetch(ANALYSIS_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ transactions: orderedTransactions })
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.message || `Request failed with status ${response.status}`);
+      }
+
+      setAnalysisResult(payload.data);
+    } catch (error) {
+      setAnalysisError(
+        "Unable to run backend analysis right now. Ensure the investment analysis server is running."
+      );
+    } finally {
+      setIsBenchmarkLoading(false);
+    }
+  };
+
   const visibleCards = 3;
   const questionSlice = questionList.slice(
     questionStartIndex,
@@ -371,6 +461,128 @@ export default function App() {
   const canScrollQuestionsRight = questionStartIndex + visibleCards < questionList.length;
   const canScrollBlogsLeft = blogStartIndex > 0;
   const canScrollBlogsRight = blogStartIndex + visibleCards < blogList.length;
+
+  if (activePage === "investment") {
+    const orderedTransactions = [...transactions].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+
+    return (
+      <div className="page">
+        <header className="detail-hero">
+          <nav className="nav">
+            <span className="logo">Satya Varta | Finance</span>
+            <div className="nav-links">
+              <button className="btn ghost" type="button" onClick={handleBackHome}>
+                ← Back to home
+              </button>
+            </div>
+          </nav>
+          <div className="detail-header">
+            <p className="eyebrow">Investment Analysis</p>
+            <h1>Rajpur FA style XIRR benchmarking</h1>
+            <p className="subtitle">
+              Add purchase and sale cashflows, compute your XIRR, and benchmark against FD,
+              Real Estate, BTC, Gold, Silver, and Nifty over the same date range.
+            </p>
+          </div>
+        </header>
+
+        <main>
+          <section className="section investment-grid">
+            <article className="card">
+              <h3>Add Transaction</h3>
+              <form className="investment-form" onSubmit={handleAddTransaction}>
+                <label>
+                  Transaction Type
+                  <select name="type" value={transactionDraft.type} onChange={handleTransactionDraftChange}>
+                    <option value="buy">Purchase (Outflow)</option>
+                    <option value="sell">Sale (Inflow)</option>
+                  </select>
+                </label>
+                <label>
+                  Date
+                  <input type="date" name="date" value={transactionDraft.date} onChange={handleTransactionDraftChange} />
+                </label>
+                <label>
+                  Amount (INR)
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    name="amount"
+                    value={transactionDraft.amount}
+                    onChange={handleTransactionDraftChange}
+                    placeholder="100000"
+                  />
+                </label>
+                <button className="btn secondary" type="submit">
+                  Add cashflow
+                </button>
+              </form>
+            </article>
+
+            <article className="card">
+              <h3>Cashflow Ledger</h3>
+              <div className="ledger-list">
+                {orderedTransactions.length === 0 ? (
+                  <p className="card-meta">No transactions yet.</p>
+                ) : (
+                  orderedTransactions.map((item) => (
+                    <div className="ledger-row" key={item.id}>
+                      <span>{item.date}</span>
+                      <span>{item.type === "buy" ? "Purchase" : "Sale"}</span>
+                      <span>{item.amount.toLocaleString("en-IN")}</span>
+                      <button className="btn ghost danger" type="button" onClick={() => handleDeleteTransaction(item.id)}>
+                        Remove
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              <button className="btn primary" type="button" onClick={handleRunInvestmentAnalysis}>
+                Calculate XIRR + Decision Score
+              </button>
+              {analysisError && <p className="login-error">{analysisError}</p>}
+            </article>
+
+            <article className="card">
+              <h3>Results</h3>
+              <p className="card-body">
+                Your XIRR: {analysisResult?.userXirrPercent == null ? "—" : `${analysisResult.userXirrPercent.toFixed(2)}%`}
+              </p>
+              <p className="card-body">
+                Decision Score: {analysisResult?.decisionScore == null ? "—" : analysisResult.decisionScore}
+              </p>
+              {analysisResult && (
+                <p className="card-meta">
+                  Benchmark buy date: {analysisResult.buyDate} • benchmark sell date (first sale): {analysisResult.sellDate}
+                </p>
+              )}
+              {isBenchmarkLoading && <p className="card-meta">Loading market benchmarks…</p>}
+              <div className="benchmark-table">
+                <div className="benchmark-head">
+                  <span>Asset</span>
+                  <span>XIRR</span>
+                  <span>Score</span>
+                </div>
+                {(analysisResult?.benchmarkRows || []).map((row) => (
+                  <div className="benchmark-row" key={row.asset}>
+                    <span>{row.asset}</span>
+                    <span>{row.xirrPercent.toFixed(2)}%</span>
+                    <span>{row.score}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="card-meta">
+                Market assets are fetched by the backend from public Yahoo Finance data when available. FD and Real Estate are fixed at 7% and 13% annual assumptions.
+              </p>
+            </article>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   if (activePage === "detail" && solutionView) {
     return (
@@ -970,6 +1182,11 @@ export default function App() {
             </li>
             <li>
               <a href="#insights">CFA Insights</a>
+            </li>
+            <li>
+              <button className="link-button" type="button" onClick={handleOpenInvestment}>
+                Investment Analysis
+              </button>
             </li>
             <li>
               <button className="link-button" type="button" onClick={handleShowAdmin}>
