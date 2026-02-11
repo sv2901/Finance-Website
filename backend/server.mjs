@@ -12,11 +12,13 @@ const SCORE_BANDS = [
 ];
 
 const MARKET_CONFIG = {
-  BTC: { symbol: "BTC-USD", fallback: 50.72 },
-  Gold: { symbol: "GC=F", fallback: 58.77 },
-  Silver: { symbol: "SI=F", fallback: 96.63 },
-  Nifty: { symbol: "^NSEI", fallback: 8.65 }
+  BTC: { symbol: "BTC-USD", fallback: 50.72, quoteCurrency: "USD" },
+  Gold: { symbol: "GC=F", fallback: 58.77, quoteCurrency: "USD" },
+  Silver: { symbol: "SI=F", fallback: 96.63, quoteCurrency: "USD" },
+  Nifty: { symbol: "^NSEI", fallback: 8.65, quoteCurrency: "INR" }
 };
+
+const USDINR_SYMBOL = "INR=X";
 
 const scoreFromReturn = (decisionReturn) => {
   if (decisionReturn == null || Number.isNaN(decisionReturn)) return null;
@@ -129,7 +131,7 @@ const fetchYahooHistory = async (symbol, startDate, endDate) => {
 };
 
 const marketXirr = async (asset, purchaseFlows, sellDate) => {
-  const { symbol, fallback } = MARKET_CONFIG[asset];
+  const { symbol, fallback, quoteCurrency } = MARKET_CONFIG[asset];
 
   try {
     const buyDates = purchaseFlows.map((item) => item.date);
@@ -139,22 +141,56 @@ const marketXirr = async (asset, purchaseFlows, sellDate) => {
 
     if (!Number.isFinite(sellPrice) || sellPrice <= 0) throw new Error(`invalid sell price: ${asset}`);
 
+    let fxHistory = null;
+    if (quoteCurrency === "USD") {
+      fxHistory = await fetchYahooHistory(USDINR_SYMBOL, earliestBuyDate, sellDate);
+    }
+
     let units = 0;
     const benchmarkCashflows = purchaseFlows.map((flow) => {
       const buyPrice = previousOrEqualOpenPrice(history, flow.date);
       if (!Number.isFinite(buyPrice) || buyPrice <= 0) {
         throw new Error(`invalid buy price: ${asset} on ${flow.date}`);
       }
-      const investedAmount = Math.abs(flow.amount);
-      units += investedAmount / buyPrice;
-      return { date: flow.date, amount: -investedAmount };
+
+      const investedAmountInr = Math.abs(flow.amount);
+      if (quoteCurrency === "USD") {
+        const usdInrAtBuy = previousOrEqualOpenPrice(fxHistory, flow.date);
+        if (!Number.isFinite(usdInrAtBuy) || usdInrAtBuy <= 0) {
+          throw new Error(`invalid USDINR price on ${flow.date}`);
+        }
+        const investedUsd = investedAmountInr / usdInrAtBuy;
+        units += investedUsd / buyPrice;
+      } else {
+        units += investedAmountInr / buyPrice;
+      }
+
+      return { date: flow.date, amount: -investedAmountInr };
     });
 
-    benchmarkCashflows.push({ date: sellDate, amount: units * sellPrice });
+    const saleAmountInr = (() => {
+      if (quoteCurrency === "USD") {
+        const usdInrAtSell = previousOrEqualOpenPrice(fxHistory, sellDate);
+        if (!Number.isFinite(usdInrAtSell) || usdInrAtSell <= 0) {
+          throw new Error(`invalid USDINR price on ${sellDate}`);
+        }
+        return units * sellPrice * usdInrAtSell;
+      }
+      return units * sellPrice;
+    })();
+
+    benchmarkCashflows.push({ date: sellDate, amount: saleAmountInr });
     const xirr = computeXirr(benchmarkCashflows);
     if (xirr == null) throw new Error(`xirr failed: ${asset}`);
 
-    return { asset, xirrPercent: xirr * 100, source: `Yahoo Finance (${symbol})` };
+    return {
+      asset,
+      xirrPercent: xirr * 100,
+      source:
+        quoteCurrency === "USD"
+          ? `Yahoo Finance (${symbol}, ${USDINR_SYMBOL})`
+          : `Yahoo Finance (${symbol})`
+    };
   } catch (error) {
     return {
       asset,

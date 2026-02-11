@@ -460,7 +460,7 @@ label {
   gap: 8px;
   font-weight: 600;
   color: #1e293b;
-  font-size: 0.9rem;
+  font-size: 0.82rem;
 }
 
 input,
@@ -468,7 +468,7 @@ textarea {
   padding: 10px 14px;
   border-radius: 12px;
   border: 1px solid #cbd5f5;
-  font-size: 0.95rem;
+  font-size: 0.85rem;
 }
 
 input:disabled,
@@ -662,18 +662,23 @@ select {
 
 .decision-grid {
   display: grid;
-  grid-template-columns: 120px 1fr 1.5fr;
+  grid-template-columns: 95px 1fr 1.35fr;
   gap: 8px;
   padding: 9px 10px;
   border-top: 1px solid #e2e8f0;
   align-items: center;
-  font-size: 0.9rem;
-  line-height: 1.25;
+  font-size: 0.82rem;
+  line-height: 1.2;
 }
 
 .decision-grid-head {
   background: #f1f5f9;
   font-weight: 700;
+  font-size: 0.8rem;
+}
+
+.decision-grid span {
+  word-break: break-word;
 }
 
 .score-cell {
