@@ -10,6 +10,7 @@
     "analysis-api": "node backend/server.mjs"
   },
   "dependencies": {
+    "dotenv": "^17.2.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
