@@ -274,7 +274,7 @@ export default function App() {
   const adminEmail = "svgupta4@gmail.com";
   const adminPassword = "JMg9Yd@2";
 
-  const canLogin = useMemo(() => adminId.trim() && adminPin.trim(), [adminId, adminPin]);
+  const canLogin = useMemo(() => Boolean(adminId.trim() && adminPin.trim()), [adminId, adminPin]);
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
