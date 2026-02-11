@@ -12,13 +12,15 @@ const SCORE_BANDS = [
 ];
 
 const MARKET_CONFIG = {
-  BTC: { symbol: "BTC-USD", fallback: 50.72, quoteCurrency: "USD" },
-  Gold: { symbol: "GC=F", fallback: 58.77, quoteCurrency: "USD" },
-  Silver: { symbol: "SI=F", fallback: 96.63, quoteCurrency: "USD" },
-  Nifty: { symbol: "^NSEI", fallback: 8.65, quoteCurrency: "INR" }
+  BTC: { provider: "coingecko", symbol: "bitcoin", fallback: 50.72, quoteCurrency: "USD" },
+  Gold: { provider: "twelvedata", symbol: "XAU/USD", fallback: 58.77, quoteCurrency: "USD" },
+  Silver: { provider: "twelvedata", symbol: "XAG/USD", fallback: 96.63, quoteCurrency: "USD" },
+  Nifty: { provider: "twelvedata", symbol: "NIFTY", fallback: 8.65, quoteCurrency: "INR" }
 };
 
-const USDINR_SYMBOL = "INR=X";
+const USDINR_CONFIG = { provider: "twelvedata", symbol: "USD/INR" };
+const CACHE_TTL_MS = 15 * 60 * 1000;
+const MARKET_HISTORY_CACHE = new Map();
 
 const scoreFromReturn = (decisionReturn) => {
   if (decisionReturn == null || Number.isNaN(decisionReturn)) return null;
@@ -89,7 +91,7 @@ const sleep = (ms) => new Promise((resolve) => {
 });
 
 const fetchJsonWithHeaders = async (url) => {
-  const retryDelaysMs = [0, 350, 800, 1500];
+  const retryDelaysMs = [0, 500, 1200, 2200];
 
   for (let attempt = 0; attempt < retryDelaysMs.length; attempt += 1) {
     if (retryDelaysMs[attempt] > 0) await sleep(retryDelaysMs[attempt]);
@@ -113,54 +115,101 @@ const fetchJsonWithHeaders = async (url) => {
   throw new Error("HTTP request failed after retries");
 };
 
-const fetchYahooHistory = async (symbol, startDate, endDate) => {
-  const start = Math.floor(new Date(startDate).getTime() / 1000) - 3 * 24 * 60 * 60;
-  const end = Math.floor(new Date(endDate).getTime() / 1000) + 3 * 24 * 60 * 60;
+const toIsoDate = (dateStringOrDate) => {
+  const date = new Date(dateStringOrDate);
+  return date.toISOString().slice(0, 10);
+};
 
-  const queryVariants = [
-    new URLSearchParams({
-      period1: String(start),
-      period2: String(end),
-      interval: "1d",
-      events: "history"
-    }),
-    new URLSearchParams({
-      range: "10y",
-      interval: "1d",
-      events: "history"
-    })
-  ];
+const fetchCoinGeckoHistory = async (coinId, startDate, endDate) => {
+  const from = Math.floor(new Date(startDate).getTime() / 1000) - 2 * 24 * 60 * 60;
+  const to = Math.floor(new Date(endDate).getTime() / 1000) + 2 * 24 * 60 * 60;
+  const url = `https://api.coingecko.com/api/v3/coins/${encodeURIComponent(coinId)}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
+  const payload = await fetchJsonWithHeaders(url);
+  const prices = payload?.prices || [];
+  if (!prices.length) throw new Error("CoinGecko market data missing");
 
-  const hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
-  let lastError = null;
+  return prices
+    .map((item) => ({ time: Number(item[0]), open: Number(item[1]) }))
+    .filter((item) => Number.isFinite(item.time) && Number.isFinite(item.open));
+};
 
-  for (const host of hosts) {
-    for (const query of queryVariants) {
-      try {
-        const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?${query}`;
-        const payload = await fetchJsonWithHeaders(url);
-        const result = payload?.chart?.result?.[0];
-        const chartError = payload?.chart?.error;
-        if (chartError) throw new Error(`${chartError?.description || chartError?.code || "unknown"}`);
+const fetchTwelveDataHistory = async (symbol, startDate, endDate) => {
+  const apiKey = process.env.TWELVE_DATA_API_KEY;
+  if (!apiKey) throw new Error("TWELVE_DATA_API_KEY is missing");
 
-        const timestamps = result?.timestamp || [];
-        const opens = result?.indicators?.quote?.[0]?.open || [];
-        if (!timestamps.length || !opens.length) throw new Error("market data missing");
+  const query = new URLSearchParams({
+    symbol,
+    interval: "1day",
+    start_date: toIsoDate(startDate),
+    end_date: toIsoDate(endDate),
+    outputsize: "5000",
+    apikey: apiKey
+  });
 
-        const rows = timestamps
-          .map((time, idx) => ({ time: time * 1000, open: opens[idx] }))
-          .filter((item) => Number.isFinite(item.open))
-          .filter((item) => item.time >= start - 365 * 24 * 60 * 60 * 1000 && item.time <= end + 365 * 24 * 60 * 60 * 1000);
-
-        if (!rows.length) throw new Error("market data missing in date window");
-        return rows;
-      } catch (error) {
-        lastError = error;
-      }
-    }
+  const url = `https://api.twelvedata.com/time_series?${query}`;
+  const payload = await fetchJsonWithHeaders(url);
+  if (payload?.status === "error") {
+    throw new Error(`TwelveData error: ${payload?.message || payload?.code || "unknown"}`);
   }
 
-  throw new Error(`Yahoo Finance fetch failed for ${symbol}: ${lastError?.message || "unknown error"}`);
+  const values = payload?.values || [];
+  if (!values.length) throw new Error("TwelveData market data missing");
+
+  return values
+    .map((row) => ({
+      time: new Date(row.datetime).getTime(),
+      open: Number.parseFloat(row.open)
+    }))
+    .filter((item) => Number.isFinite(item.time) && Number.isFinite(item.open));
+};
+
+const fetchMarketHistory = async (config, startDate, endDate) => {
+  if (config.provider === "coingecko") {
+    return fetchCoinGeckoHistory(config.symbol, startDate, endDate);
+  }
+  if (config.provider === "twelvedata") {
+    return fetchTwelveDataHistory(config.symbol, startDate, endDate);
+  }
+  throw new Error(`Unknown provider: ${config.provider}`);
+};
+
+const getCachedHistory = async (cacheKey, config, startDate, endDate) => {
+  const now = Date.now();
+  const cached = MARKET_HISTORY_CACHE.get(cacheKey);
+  if (cached && now - cached.fetchedAt <= CACHE_TTL_MS) {
+    return cached.rows;
+  }
+
+  const rows = await fetchMarketHistory(config, startDate, endDate);
+  MARKET_HISTORY_CACHE.set(cacheKey, {
+    rows,
+    fetchedAt: now
+  });
+  return rows;
+};
+
+const preloadHistories = async (startDate, sellDate) => {
+  const histories = {};
+
+  const configs = {
+    BTC: MARKET_CONFIG.BTC,
+    Gold: MARKET_CONFIG.Gold,
+    Silver: MARKET_CONFIG.Silver,
+    Nifty: MARKET_CONFIG.Nifty,
+    USDINR: USDINR_CONFIG
+  };
+
+  for (const [key, config] of Object.entries(configs)) {
+    const cacheKey = `${config.provider}:${config.symbol}`;
+    try {
+      histories[config.symbol] = await getCachedHistory(cacheKey, config, startDate, sellDate);
+    } catch {
+      histories[config.symbol] = null;
+    }
+    await sleep(120);
+  }
+
+  return histories;
 };
 
 const marketXirr = async (asset, purchaseFlows, sellDate, histories) => {
@@ -169,15 +218,15 @@ const marketXirr = async (asset, purchaseFlows, sellDate, histories) => {
   try {
     const history = histories[symbol];
     if (!Array.isArray(history) || history.length === 0) {
-      throw new Error(`Yahoo Finance fetch failed for ${symbol}: HTTP 429 or blocked`);
+      throw new Error(`Market fetch failed for ${symbol}: blocked or provider unavailable`);
     }
     const sellPrice = previousOrEqualOpenPrice(history, sellDate);
 
     if (!Number.isFinite(sellPrice) || sellPrice <= 0) throw new Error(`invalid sell price: ${asset}`);
 
-    const fxHistory = quoteCurrency === "USD" ? histories[USDINR_SYMBOL] : null;
+    const fxHistory = quoteCurrency === "USD" ? histories[USDINR_CONFIG.symbol] : null;
     if (quoteCurrency === "USD" && (!Array.isArray(fxHistory) || fxHistory.length === 0)) {
-      throw new Error(`Yahoo Finance fetch failed for ${USDINR_SYMBOL}: HTTP 429 or blocked`);
+      throw new Error(`Market fetch failed for ${USDINR_CONFIG.symbol}: blocked or provider unavailable`);
     }
 
     let units = 0;
@@ -222,8 +271,8 @@ const marketXirr = async (asset, purchaseFlows, sellDate, histories) => {
       xirrPercent: xirr * 100,
       source:
         quoteCurrency === "USD"
-          ? `Yahoo Finance (${symbol}, ${USDINR_SYMBOL})`
-          : `Yahoo Finance (${symbol})`
+          ? `Market data (${symbol}, ${USDINR_CONFIG.symbol})`
+          : `Market data (${symbol})`
     };
   } catch (error) {
     return {
@@ -314,17 +363,7 @@ const server = http.createServer(async (req, res) => {
     const buyDates = purchaseFlows.map((item) => item.date);
     const earliestBuyDate = buyDates.reduce((min, date) => (date < min ? date : min), buyDates[0]);
 
-    const histories = {};
-    const symbolsToLoad = ["BTC-USD", "GC=F", "SI=F", "^NSEI", USDINR_SYMBOL];
-
-    for (const symbol of symbolsToLoad) {
-      try {
-        histories[symbol] = await fetchYahooHistory(symbol, earliestBuyDate, firstSell.date);
-      } catch {
-        histories[symbol] = null;
-      }
-      await sleep(120);
-    }
+    const histories = await preloadHistories(earliestBuyDate, firstSell.date);
 
     const marketRows = [];
     for (const asset of ["BTC", "Gold", "Silver", "Nifty"]) {

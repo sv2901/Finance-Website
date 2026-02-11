@@ -767,11 +767,11 @@ export default function App() {
               </div>
               {usedFallbackBenchmark && (
                 <p className="login-error">
-                  Live Yahoo Finance fetch failed for one or more assets, so benchmark test data fallback was used. Check the Source column for per-asset reason.
+                  Live market-provider fetch failed for one or more assets, so benchmark test data fallback was used. Check the Source column for per-asset reason.
                 </p>
               )}
               <p className="card-meta">
-                Market assets are fetched by the backend from public Yahoo Finance open-price data when available. If data is unavailable on the target date, the previous available market date is used. USD-quoted assets are converted INR↔USD using Yahoo INR=X data. FD and Real Estate are fixed at 7% and 13% annual assumptions.
+                Market assets are fetched by the backend from provider APIs (CoinGecko/Twelve Data) with 15-minute caching. If data is unavailable on the target date, the previous available market date is used. USD-quoted assets are converted INR↔USD using USD/INR provider data. FD and Real Estate are fixed at 7% and 13% annual assumptions.
               </p>
               <div className="decision-legend">
                 <h4>Decision Score Interpretation</h4>
