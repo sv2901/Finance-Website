@@ -657,16 +657,18 @@ select {
   background: #0f2f74;
   color: #f8fafc;
   padding: 10px 12px;
-  font-size: 1rem;
+  font-size: 0.95rem;
 }
 
 .decision-grid {
   display: grid;
-  grid-template-columns: 140px 1fr 1.4fr;
-  gap: 10px;
-  padding: 10px 12px;
+  grid-template-columns: 120px 1fr 1.5fr;
+  gap: 8px;
+  padding: 9px 10px;
   border-top: 1px solid #e2e8f0;
   align-items: center;
+  font-size: 0.9rem;
+  line-height: 1.25;
 }
 
 .decision-grid-head {
@@ -678,7 +680,7 @@ select {
   text-align: center;
   font-weight: 700;
   border-radius: 8px;
-  padding: 6px;
+  padding: 4px 6px;
   color: #0f172a;
 }
 

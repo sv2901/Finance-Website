@@ -90,10 +90,7 @@ const fetchJsonWithHeaders = async (url) => {
     }
   });
 
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
-  }
-
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
 };
 
@@ -107,43 +104,63 @@ const fetchYahooHistory = async (symbol, startDate, endDate) => {
     events: "history"
   });
 
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?${query}`;
-  const payload = await fetchJsonWithHeaders(url);
-  const result = payload?.chart?.result?.[0];
-  const chartError = payload?.chart?.error;
-  if (chartError) {
-    throw new Error(`Yahoo Finance error for ${symbol}: ${chartError?.description || chartError?.code || "unknown"}`);
+  const hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
+  let lastError = null;
+
+  for (const host of hosts) {
+    try {
+      const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?${query}`;
+      const payload = await fetchJsonWithHeaders(url);
+      const result = payload?.chart?.result?.[0];
+      const chartError = payload?.chart?.error;
+      if (chartError) throw new Error(`${chartError?.description || chartError?.code || "unknown"}`);
+
+      const timestamps = result?.timestamp || [];
+      const opens = result?.indicators?.quote?.[0]?.open || [];
+      if (!timestamps.length || !opens.length) throw new Error("market data missing");
+
+      return timestamps.map((time, idx) => ({ time: time * 1000, open: opens[idx] }));
+    } catch (error) {
+      lastError = error;
+    }
   }
-  const timestamps = result?.timestamp || [];
-  const opens = result?.indicators?.quote?.[0]?.open || [];
 
-  if (!timestamps.length || !opens.length) throw new Error(`market data missing: ${symbol}`);
-
-  return timestamps.map((time, idx) => ({ time: time * 1000, open: opens[idx] }));
+  throw new Error(`Yahoo Finance fetch failed for ${symbol}: ${lastError?.message || "unknown error"}`);
 };
 
-const marketXirr = async (asset, buyDate, sellDate) => {
+const marketXirr = async (asset, purchaseFlows, sellDate) => {
   const { symbol, fallback } = MARKET_CONFIG[asset];
 
   try {
-    const history = await fetchYahooHistory(symbol, buyDate, sellDate);
-    const buyPrice = previousOrEqualOpenPrice(history, buyDate);
+    const buyDates = purchaseFlows.map((item) => item.date);
+    const earliestBuyDate = buyDates.reduce((min, date) => (date < min ? date : min), buyDates[0]);
+    const history = await fetchYahooHistory(symbol, earliestBuyDate, sellDate);
     const sellPrice = previousOrEqualOpenPrice(history, sellDate);
 
-    if (!Number.isFinite(buyPrice) || !Number.isFinite(sellPrice) || buyPrice <= 0 || sellPrice <= 0) {
-      throw new Error(`invalid prices: ${asset}`);
-    }
+    if (!Number.isFinite(sellPrice) || sellPrice <= 0) throw new Error(`invalid sell price: ${asset}`);
 
-    const xirr = computeXirr([
-      { date: buyDate, amount: -buyPrice },
-      { date: sellDate, amount: sellPrice }
-    ]);
+    let units = 0;
+    const benchmarkCashflows = purchaseFlows.map((flow) => {
+      const buyPrice = previousOrEqualOpenPrice(history, flow.date);
+      if (!Number.isFinite(buyPrice) || buyPrice <= 0) {
+        throw new Error(`invalid buy price: ${asset} on ${flow.date}`);
+      }
+      const investedAmount = Math.abs(flow.amount);
+      units += investedAmount / buyPrice;
+      return { date: flow.date, amount: -investedAmount };
+    });
 
+    benchmarkCashflows.push({ date: sellDate, amount: units * sellPrice });
+    const xirr = computeXirr(benchmarkCashflows);
     if (xirr == null) throw new Error(`xirr failed: ${asset}`);
 
     return { asset, xirrPercent: xirr * 100, source: `Yahoo Finance (${symbol})` };
-  } catch {
-    return { asset, xirrPercent: fallback, source: "Fallback benchmark assumption" };
+  } catch (error) {
+    return {
+      asset,
+      xirrPercent: fallback,
+      source: `Fallback benchmark assumption (${error instanceof Error ? error.message : "market fetch failed"})`
+    };
   }
 };
 
@@ -223,11 +240,13 @@ const server = http.createServer(async (req, res) => {
     }
 
 
+    const purchaseFlows = transactions.filter((item) => item.amount < 0);
+
     const marketRows = await Promise.all([
-      marketXirr("BTC", firstBuy.date, firstSell.date),
-      marketXirr("Gold", firstBuy.date, firstSell.date),
-      marketXirr("Silver", firstBuy.date, firstSell.date),
-      marketXirr("Nifty", firstBuy.date, firstSell.date)
+      marketXirr("BTC", purchaseFlows, firstSell.date),
+      marketXirr("Gold", purchaseFlows, firstSell.date),
+      marketXirr("Silver", purchaseFlows, firstSell.date),
+      marketXirr("Nifty", purchaseFlows, firstSell.date)
     ]);
 
     const benchmarkRows = [
