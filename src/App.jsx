@@ -149,6 +149,104 @@ const readFileAsDataUrl = (file) =>
     reader.readAsDataURL(file);
   });
 
+
+const getDefaultAnalysisApiUrl = () => {
+  if (typeof window === "undefined") return "http://localhost:8787/api/investment-analysis";
+  const isLocalhost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  return isLocalhost
+    ? "http://localhost:8787/api/investment-analysis"
+    : "/api/investment-analysis";
+};
+
+const ANALYSIS_API_URL =
+  import.meta.env.VITE_ANALYSIS_API_URL?.trim() || getDefaultAnalysisApiUrl();
+
+const createEmptyTransaction = () => ({
+  date: "",
+  amount: "",
+  type: "buy"
+});
+
+
+const getTodayIsoDate = () => new Date().toISOString().slice(0, 10);
+
+const resolveDateToIso = (value) => {
+  if (!value) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  if (typeof value === "number") {
+    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+    const result = new Date(excelEpoch.getTime() + value * 24 * 60 * 60 * 1000);
+    if (!Number.isNaN(result.getTime())) return result.toISOString().slice(0, 10);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+
+    const ddmmyyyy = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    if (ddmmyyyy) {
+      const day = Number(ddmmyyyy[1]);
+      const month = Number(ddmmyyyy[2]);
+      const year = Number(ddmmyyyy[3]);
+      const parsed = new Date(Date.UTC(year, month - 1, day));
+      if (
+        parsed.getUTCFullYear() === year
+        && parsed.getUTCMonth() === month - 1
+        && parsed.getUTCDate() === day
+      ) {
+        return parsed.toISOString().slice(0, 10);
+      }
+    }
+
+    const yyyymmdd = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    if (yyyymmdd) {
+      const year = Number(yyyymmdd[1]);
+      const month = Number(yyyymmdd[2]);
+      const day = Number(yyyymmdd[3]);
+      const parsed = new Date(Date.UTC(year, month - 1, day));
+      if (
+        parsed.getUTCFullYear() === year
+        && parsed.getUTCMonth() === month - 1
+        && parsed.getUTCDate() === day
+      ) {
+        return parsed.toISOString().slice(0, 10);
+      }
+    }
+
+    const asDate = new Date(trimmed);
+    if (!Number.isNaN(asDate.getTime())) return asDate.toISOString().slice(0, 10);
+  }
+  return "";
+};
+
+const normalizeTransactionType = (value) => {
+  const text = String(value || "").toLowerCase();
+  if (text.includes("sale") || text.includes("inflow") || text === "sell") return "sell";
+  return "buy";
+};
+
+const loadXlsxLibrary = (() => {
+  let promise;
+  return async () => {
+    if (!promise) {
+      promise = import("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm");
+    }
+    const module = await promise;
+    return module.default ?? module;
+  };
+})();
+
+const validateSaleConstraints = (cashflows) => {
+  const ordered = [...cashflows].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const firstSale = ordered.find((item) => item.amount > 0);
+  if (!firstSale) return "Sale Data Required.";
+  if (firstSale.date > getTodayIsoDate()) {
+    return "First sale date must be less than or equal to today.";
+  }
+  return null;
+};
+
 export default function App() {
   const [adminId, setAdminId] = useState("");
   const [adminPin, setAdminPin] = useState("");
@@ -163,13 +261,20 @@ export default function App() {
   const [solutionView, setSolutionView] = useState(null);
   const [showSolutionDetail, setShowSolutionDetail] = useState(false);
   const [activePage, setActivePage] = useState("home");
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [questionStartIndex, setQuestionStartIndex] = useState(0);
   const [blogStartIndex, setBlogStartIndex] = useState(0);
+  const [transactionDraft, setTransactionDraft] = useState(createEmptyTransaction());
+  const [transactions, setTransactions] = useState([]);
+  const [analysisResult, setAnalysisResult] = useState(null);
+  const [analysisError, setAnalysisError] = useState("");
+  const [excelError, setExcelError] = useState("");
+  const [isBenchmarkLoading, setIsBenchmarkLoading] = useState(false);
 
   const adminEmail = "svgupta4@gmail.com";
   const adminPassword = "JMg9Yd@2";
 
-  const canLogin = useMemo(() => adminId.trim() && adminPin.trim(), [adminId, adminPin]);
+  const canLogin = useMemo(() => Boolean(adminId.trim() && adminPin.trim()), [adminId, adminPin]);
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
@@ -352,6 +457,175 @@ export default function App() {
     setActivePage("home");
   };
 
+  const handleShowAdmin = () => {
+    setShowAdminPanel(true);
+    setTimeout(() => {
+      document.getElementById("admin")?.scrollIntoView({ behavior: "smooth" });
+    }, 0);
+  };
+
+  const handleOpenInvestment = () => {
+    setActivePage("investment");
+    setAnalysisError("");
+  };
+
+  const handleBackHome = () => {
+    setActivePage("home");
+  };
+
+  const handleTransactionDraftChange = (event) => {
+    const { name, value } = event.target;
+    setTransactionDraft((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const XLSX = await loadXlsxLibrary();
+      const templateRows = [
+        ["Date", "Transaction Type", "Amount (INR)"],
+        ["2024-02-10", "Purchase", 1000000],
+        ["2026-07-10", "Sale", 5000000]
+      ];
+      const workbook = XLSX.utils.book_new();
+      const worksheet = XLSX.utils.aoa_to_sheet(templateRows);
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Transactions");
+      const output = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+      const blob = new Blob([output], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "investment-transactions-template.xlsx";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setExcelError("Unable to generate template file. Please try again.");
+    }
+  };
+
+  const handleExcelUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const XLSX = await loadXlsxLibrary();
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
+
+      const parsedTransactions = rows
+        .map((row, idx) => {
+          const rawDate = row.Date || row.date || row["Transaction Date"];
+          const isoDate = resolveDateToIso(rawDate);
+          const type = normalizeTransactionType(row["Transaction Type"] || row.Type || row.type);
+          const rawAmount = row["Amount (INR)"] ?? row.Amount ?? row.amount;
+          const amountValue = Number.parseFloat(String(rawAmount).replaceAll(",", ""));
+
+          if (!isoDate || !Number.isFinite(amountValue) || amountValue === 0) return null;
+
+          return {
+            id: `excel-${Date.now()}-${idx}`,
+            date: isoDate,
+            amount: type === "buy" ? -Math.abs(amountValue) : Math.abs(amountValue),
+            type
+          };
+        })
+        .filter(Boolean);
+
+      if (parsedTransactions.length === 0) {
+        setExcelError("No valid rows found in the uploaded file.");
+        return;
+      }
+
+      const saleError = validateSaleConstraints(parsedTransactions);
+      if (saleError) {
+        setExcelError(saleError);
+        return;
+      }
+
+      setTransactions(parsedTransactions);
+      setAnalysisResult(null);
+      setAnalysisError("");
+      setExcelError("");
+    } catch (error) {
+      setExcelError("Unable to read Excel file. Please use the downloaded template format.");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const handleAddTransaction = (event) => {
+    event.preventDefault();
+    if (!transactionDraft.date || !transactionDraft.amount) return;
+    const numericAmount = Number.parseFloat(transactionDraft.amount);
+    if (!Number.isFinite(numericAmount) || numericAmount <= 0) return;
+
+    setTransactions((prev) => [
+      ...prev,
+      {
+        id: `txn-${Date.now()}`,
+        date: transactionDraft.date,
+        amount: transactionDraft.type === "buy" ? -numericAmount : numericAmount,
+        type: transactionDraft.type
+      }
+    ]);
+    setAnalysisResult(null);
+    setTransactionDraft((prev) => ({ ...createEmptyTransaction(), type: prev.type }));
+  };
+
+  const handleDeleteTransaction = (txnId) => {
+    setTransactions((prev) => prev.filter((item) => item.id !== txnId));
+    setAnalysisResult(null);
+  };
+
+  const handleRunInvestmentAnalysis = async () => {
+    const orderedTransactions = [...transactions].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+
+    if (orderedTransactions.length < 2) {
+      setAnalysisError("Add at least one purchase and one sale transaction.");
+      return;
+    }
+
+    const saleError = validateSaleConstraints(orderedTransactions);
+    if (saleError) {
+      setAnalysisError(saleError);
+      return;
+    }
+
+    setAnalysisError("");
+    setExcelError("");
+    setIsBenchmarkLoading(true);
+
+    try {
+      const response = await fetch(ANALYSIS_API_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ transactions: orderedTransactions })
+      });
+
+      const payload = await response.json();
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.message || `Request failed with status ${response.status}`);
+      }
+
+      setAnalysisResult(payload.data);
+    } catch (error) {
+      setAnalysisError(
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to run backend analysis right now. Ensure the investment analysis server is running."
+      );
+    } finally {
+      setIsBenchmarkLoading(false);
+    }
+  };
+
   const visibleCards = 3;
   const questionSlice = questionList.slice(
     questionStartIndex,
@@ -363,6 +637,179 @@ export default function App() {
   const canScrollQuestionsRight = questionStartIndex + visibleCards < questionList.length;
   const canScrollBlogsLeft = blogStartIndex > 0;
   const canScrollBlogsRight = blogStartIndex + visibleCards < blogList.length;
+
+  if (activePage === "investment") {
+    const orderedTransactions = [...transactions].sort(
+      (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+    const hasUnavailableMarketData = (analysisResult?.benchmarkRows || []).some((row) => row.xirrPercent == null);
+
+    return (
+      <div className="page">
+        <header className="detail-hero">
+          <nav className="nav">
+            <span className="logo">Satya Varta | Finance</span>
+            <div className="nav-links">
+              <button className="btn ghost" type="button" onClick={handleBackHome}>
+                ← Back to home
+              </button>
+            </div>
+          </nav>
+          <div className="detail-header">
+            <p className="eyebrow">Investment Analysis</p>
+            <h1>Financial Analysis XIRR Benchmarking</h1>
+            <p className="subtitle">
+              Add purchase and sale cashflows, compute your XIRR, and benchmark against FD,
+              Real Estate, BTC, Gold, Silver, and Nifty over the same date range.
+            </p>
+          </div>
+        </header>
+
+        <main>
+          <section className="section investment-grid">
+            <article className="card">
+              <h3>Add Transaction</h3>
+              <div className="template-actions">
+                <button className="btn ghost" type="button" onClick={handleDownloadTemplate}>
+                  Download Excel Template
+                </button>
+                <label className="upload-button">
+                  Upload Filled Excel
+                  <input type="file" accept=".xlsx,.xls" onChange={handleExcelUpload} hidden />
+                </label>
+              </div>
+              {excelError && <p className="login-error">{excelError}</p>}
+              <form className="investment-form" onSubmit={handleAddTransaction}>
+                <label>
+                  Transaction Type
+                  <select name="type" value={transactionDraft.type} onChange={handleTransactionDraftChange}>
+                    <option value="buy">Purchase (Outflow)</option>
+                    <option value="sell">Sale (Inflow)</option>
+                  </select>
+                </label>
+                <label>
+                  Date
+                  <input type="date" name="date" value={transactionDraft.date} onChange={handleTransactionDraftChange} />
+                </label>
+                <label>
+                  Amount (INR)
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    name="amount"
+                    value={transactionDraft.amount}
+                    onChange={handleTransactionDraftChange}
+                    placeholder="100000"
+                  />
+                </label>
+                <button className="btn secondary" type="submit">
+                  Add cashflow
+                </button>
+              </form>
+            </article>
+
+            <article className="card">
+              <h3>Cashflow Ledger</h3>
+              <div className="ledger-list">
+                {orderedTransactions.length === 0 ? (
+                  <p className="card-meta">No transactions yet.</p>
+                ) : (
+                  orderedTransactions.map((item) => (
+                    <div className="ledger-row" key={item.id}>
+                      <span>{item.date}</span>
+                      <span>{item.type === "buy" ? "Purchase" : "Sale"}</span>
+                      <span>{item.amount.toLocaleString("en-IN")}</span>
+                      <button className="btn ghost danger" type="button" onClick={() => handleDeleteTransaction(item.id)}>
+                        Remove
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              <button className="btn primary" type="button" onClick={handleRunInvestmentAnalysis}>
+                Calculate XIRR + Decision Score
+              </button>
+              {analysisError && <p className="login-error">{analysisError}</p>}
+            </article>
+
+            <article className="card">
+              <h3>Results</h3>
+              <p className="card-body">
+                Your XIRR: {analysisResult?.userXirrPercent == null ? "—" : `${analysisResult.userXirrPercent.toFixed(2)}%`}
+              </p>
+              <p className="card-body">
+                Decision Score: {analysisResult?.decisionScore == null ? "—" : analysisResult.decisionScore}
+              </p>
+              {analysisResult && (
+                <p className="card-meta">
+                  Benchmark buy dates same as purchase dates. Benchmark Sell date(First Sale): {analysisResult.sellDate}. Idea behind this concept is the user might have a asset class that is not liquid hence cannot end investment on first date but these are commodities which can be sold on regulated markets.
+                </p>
+              )}
+              {isBenchmarkLoading && <p className="card-meta">Loading market benchmarks…</p>}
+              <div className="benchmark-table">
+                <div className="benchmark-head">
+                  <span>Asset</span>
+                  <span>XIRR</span>
+                  <span>Score</span>
+                  <span>Source</span>
+                </div>
+                {(analysisResult?.benchmarkRows || []).map((row) => (
+                  <div className="benchmark-row" key={row.asset}>
+                    <span>{row.asset}</span>
+                    <span>{row.xirrPercent == null ? "—" : `${row.xirrPercent.toFixed(2)}%`}</span>
+                    <span>{row.score == null ? "—" : row.score}</span>
+                    <span className="source-cell">{row.source || "—"}</span>
+                  </div>
+                ))}
+              </div>
+              {hasUnavailableMarketData && (
+                <p className="login-error">
+                  Market data is temporarily unavailable for one or more assets. Check the Source column for per-asset details.
+                </p>
+              )}
+              <p className="card-meta">
+                Market assets are fetched by the backend from provider APIs (CoinGecko/Twelve Data) with 15-minute caching. If data is unavailable on the target date, the previous available market date is used. USD-quoted assets are converted INR↔USD using USD/INR provider data. FD and Real Estate are fixed at 7% and 13% annual assumptions.
+              </p>
+              <div className="decision-legend">
+                <h4>Decision Score Interpretation</h4>
+                <div className="decision-grid decision-grid-head">
+                  <span>Decision Score</span>
+                  <span>Category</span>
+                  <span>Meaning</span>
+                </div>
+                <div className="decision-grid">
+                  <span className="score-cell bad">&lt;25</span>
+                  <span>Bad Decision</span>
+                  <span>Capital destruction</span>
+                </div>
+                <div className="decision-grid">
+                  <span className="score-cell avg">25-39</span>
+                  <span>Average</span>
+                  <span>Suboptimal Allocation</span>
+                </div>
+                <div className="decision-grid">
+                  <span className="score-cell good">40-69</span>
+                  <span>Good</span>
+                  <span>Market-beating allocation</span>
+                </div>
+                <div className="decision-grid">
+                  <span className="score-cell great">70-99</span>
+                  <span>Great</span>
+                  <span>Strong alpha generated</span>
+                </div>
+                <div className="decision-grid">
+                  <span className="score-cell ultimate">100</span>
+                  <span>Ultimate</span>
+                  <span>Exceptional investment</span>
+                </div>
+              </div>
+            </article>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   if (activePage === "detail" && solutionView) {
     return (
@@ -437,7 +884,7 @@ export default function App() {
           <div className="nav-links">
             <a href="#question-bank">Question Bank</a>
             <a href="#insights">CFA Insights</a>
-            <a href="#admin">Admin</a>
+            {showAdminPanel && <a href="#admin">Admin</a>}
           </div>
           {isAdmin ? (
             <button className="btn ghost" onClick={handleLogout} type="button">
@@ -672,273 +1119,281 @@ export default function App() {
           </div>
         </section>
 
-        <section id="admin" className="section">
-          <div className="section-header">
-            <div>
-              <p className="eyebrow">Admin Upload</p>
-              <h2>Fast uploads for your personal content library</h2>
-              <p className="section-subtitle">
-                Use a simple admin ID to add new questions and blog insights in seconds.
-              </p>
+        {showAdminPanel && (
+          <section id="admin" className="section">
+            <div className="section-header">
+              <div>
+                <p className="eyebrow">Admin Upload</p>
+                <h2>Fast uploads for your personal content library</h2>
+                <p className="section-subtitle">
+                  Use a simple admin ID to add new questions and blog insights in seconds.
+                </p>
+              </div>
+              <div className="admin-status">
+                <span className={isAdmin ? "status active" : "status"}>
+                  {isAdmin ? "Admin authenticated" : "Admin access required"}
+                </span>
+              </div>
             </div>
-            <div className="admin-status">
-              <span className={isAdmin ? "status active" : "status"}>
-                {isAdmin ? "Admin authenticated" : "Admin access required"}
-              </span>
+
+            <div className="admin-grid">
+              <form className="card" onSubmit={handleAdminLogin}>
+                <h3>Admin Login</h3>
+                <label>
+                  Admin Email
+                  <input
+                    type="email"
+                    value={adminId}
+                    onChange={(event) => setAdminId(event.target.value)}
+                    placeholder="e.g. you@example.com"
+                  />
+                </label>
+                <label>
+                  Password
+                  <input
+                    type="password"
+                    value={adminPin}
+                    onChange={(event) => setAdminPin(event.target.value)}
+                    placeholder="••••"
+                  />
+                </label>
+                {loginError && <p className="login-error">{loginError}</p>}
+                <button className="btn primary" type="submit" disabled={!canLogin}>
+                  Enable admin mode
+                </button>
+              </form>
+
+              <form className="card" onSubmit={handleQuestionSubmit}>
+                <div className="card-header-row">
+                  <h3>{editingQuestionId ? "Edit Question" : "Upload Question"}</h3>
+                  {editingQuestionId && (
+                    <button className="btn ghost" type="button" onClick={resetQuestionForm}>
+                      Cancel edit
+                    </button>
+                  )}
+                </div>
+                <label>
+                  Title
+                  <input
+                    type="text"
+                    name="title"
+                    value={questionForm.title}
+                    onChange={handleQuestionChange}
+                    placeholder="GMAT Quant: Geometry shortcut"
+                    disabled={!isAdmin}
+                  />
+                </label>
+                <label>
+                  Topic
+                  <input
+                    type="text"
+                    name="topic"
+                    value={questionForm.topic}
+                    onChange={handleQuestionChange}
+                    placeholder="Geometry"
+                    disabled={!isAdmin}
+                  />
+                </label>
+                <label>
+                  Difficulty
+                  <input
+                    type="text"
+                    name="difficulty"
+                    value={questionForm.difficulty}
+                    onChange={handleQuestionChange}
+                    placeholder="Easy / Medium / Hard"
+                    disabled={!isAdmin}
+                  />
+                </label>
+                <label>
+                  Prompt
+                  <textarea
+                    name="prompt"
+                    value={questionForm.prompt}
+                    onChange={handleQuestionChange}
+                    placeholder="Enter the question prompt..."
+                    rows={4}
+                    disabled={!isAdmin}
+                  />
+                </label>
+                <label>
+                  Solution text
+                  <textarea
+                    name="solutionText"
+                    value={questionForm.solutionText}
+                    onChange={handleQuestionChange}
+                    placeholder="Write the solution steps..."
+                    rows={4}
+                    disabled={!isAdmin}
+                  />
+                </label>
+                <div
+                  className="upload-dropzone"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => handleDrop(event, "image", setQuestionForm)}
+                >
+                  <p>Drag & drop solution image (JPG/PNG) here</p>
+                  <label className="upload-button">
+                    Upload image
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg"
+                      onChange={(event) =>
+                        handleImageUpload(event.target.files?.[0], setQuestionForm)
+                      }
+                      disabled={!isAdmin}
+                      hidden
+                    />
+                  </label>
+                  {questionForm.solutionImage && <span>Image ready</span>}
+                </div>
+                <div
+                  className="upload-dropzone"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => handleDrop(event, "video", setQuestionForm)}
+                >
+                  <p>Drag & drop solution video (MP4/WebM) here</p>
+                  <label className="upload-button">
+                    Upload video
+                    <input
+                      type="file"
+                      accept="video/mp4,video/webm"
+                      onChange={(event) =>
+                        handleVideoUpload(event.target.files?.[0], setQuestionForm)
+                      }
+                      disabled={!isAdmin}
+                      hidden
+                    />
+                  </label>
+                  {questionForm.solutionVideo && <span>Video ready</span>}
+                </div>
+                <label>
+                  Video link (optional)
+                  <input
+                    type="text"
+                    name="videoUrl"
+                    value={questionForm.videoUrl}
+                    onChange={handleQuestionChange}
+                    placeholder="https://"
+                    disabled={!isAdmin}
+                  />
+                </label>
+                <button className="btn secondary" type="submit" disabled={!isAdmin}>
+                  {editingQuestionId ? "Save changes" : "Publish question"}
+                </button>
+              </form>
+
+              <form className="card" onSubmit={handleBlogSubmit}>
+                <div className="card-header-row">
+                  <h3>
+                    {editingBlogId
+                      ? "Edit Finance Blog / CFA Insight"
+                      : "Upload Finance Blog / CFA Insight"}
+                  </h3>
+                  {editingBlogId && (
+                    <button className="btn ghost" type="button" onClick={resetBlogForm}>
+                      Cancel edit
+                    </button>
+                  )}
+                </div>
+                <label>
+                  Title
+                  <input
+                    type="text"
+                    name="title"
+                    value={blogForm.title}
+                    onChange={handleBlogChange}
+                    placeholder="CFA Level II: Equity multipliers"
+                    disabled={!isAdmin}
+                  />
+                </label>
+                <label>
+                  Summary
+                  <textarea
+                    name="summary"
+                    value={blogForm.summary}
+                    onChange={handleBlogChange}
+                    placeholder="Quick summary to show on the card..."
+                    rows={4}
+                    disabled={!isAdmin}
+                  />
+                </label>
+                <label>
+                  Read time
+                  <input
+                    type="text"
+                    name="readTime"
+                    value={blogForm.readTime}
+                    onChange={handleBlogChange}
+                    placeholder="6 min read"
+                    disabled={!isAdmin}
+                  />
+                </label>
+                <label>
+                  Solution text
+                  <textarea
+                    name="solutionText"
+                    value={blogForm.solutionText}
+                    onChange={handleBlogChange}
+                    placeholder="Write the key takeaways..."
+                    rows={4}
+                    disabled={!isAdmin}
+                  />
+                </label>
+                <div
+                  className="upload-dropzone"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => handleDrop(event, "image", setBlogForm)}
+                >
+                  <p>Drag & drop solution image (JPG/PNG) here</p>
+                  <label className="upload-button">
+                    Upload image
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg"
+                      onChange={(event) => handleImageUpload(event.target.files?.[0], setBlogForm)}
+                      disabled={!isAdmin}
+                      hidden
+                    />
+                  </label>
+                  {blogForm.solutionImage && <span>Image ready</span>}
+                </div>
+                <div
+                  className="upload-dropzone"
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => handleDrop(event, "video", setBlogForm)}
+                >
+                  <p>Drag & drop solution video (MP4/WebM) here</p>
+                  <label className="upload-button">
+                    Upload video
+                    <input
+                      type="file"
+                      accept="video/mp4,video/webm"
+                      onChange={(event) => handleVideoUpload(event.target.files?.[0], setBlogForm)}
+                      disabled={!isAdmin}
+                      hidden
+                    />
+                  </label>
+                  {blogForm.solutionVideo && <span>Video ready</span>}
+                </div>
+                <label>
+                  Video link (optional)
+                  <input
+                    type="text"
+                    name="videoUrl"
+                    value={blogForm.videoUrl}
+                    onChange={handleBlogChange}
+                    placeholder="https://"
+                    disabled={!isAdmin}
+                  />
+                </label>
+                <button className="btn secondary" type="submit" disabled={!isAdmin}>
+                  {editingBlogId ? "Save changes" : "Publish insight"}
+                </button>
+              </form>
             </div>
-          </div>
-
-          <div className="admin-grid">
-            <form className="card" onSubmit={handleAdminLogin}>
-              <h3>Admin Login</h3>
-              <label>
-                Admin Email
-                <input
-                  type="email"
-                  value={adminId}
-                  onChange={(event) => setAdminId(event.target.value)}
-                  placeholder="e.g. you@example.com"
-                />
-              </label>
-              <label>
-                Password
-                <input
-                  type="password"
-                  value={adminPin}
-                  onChange={(event) => setAdminPin(event.target.value)}
-                  placeholder="••••"
-                />
-              </label>
-              {loginError && <p className="login-error">{loginError}</p>}
-              <button className="btn primary" type="submit" disabled={!canLogin}>
-                Enable admin mode
-              </button>
-            </form>
-
-            <form className="card" onSubmit={handleQuestionSubmit}>
-              <div className="card-header-row">
-                <h3>{editingQuestionId ? "Edit Question" : "Upload Question"}</h3>
-                {editingQuestionId && (
-                  <button className="btn ghost" type="button" onClick={resetQuestionForm}>
-                    Cancel edit
-                  </button>
-                )}
-              </div>
-              <label>
-                Title
-                <input
-                  type="text"
-                  name="title"
-                  value={questionForm.title}
-                  onChange={handleQuestionChange}
-                  placeholder="GMAT Quant: Geometry shortcut"
-                  disabled={!isAdmin}
-                />
-              </label>
-              <label>
-                Topic
-                <input
-                  type="text"
-                  name="topic"
-                  value={questionForm.topic}
-                  onChange={handleQuestionChange}
-                  placeholder="Geometry"
-                  disabled={!isAdmin}
-                />
-              </label>
-              <label>
-                Difficulty
-                <input
-                  type="text"
-                  name="difficulty"
-                  value={questionForm.difficulty}
-                  onChange={handleQuestionChange}
-                  placeholder="Easy / Medium / Hard"
-                  disabled={!isAdmin}
-                />
-              </label>
-              <label>
-                Prompt
-                <textarea
-                  name="prompt"
-                  value={questionForm.prompt}
-                  onChange={handleQuestionChange}
-                  placeholder="Enter the question prompt..."
-                  rows={4}
-                  disabled={!isAdmin}
-                />
-              </label>
-              <label>
-                Solution text
-                <textarea
-                  name="solutionText"
-                  value={questionForm.solutionText}
-                  onChange={handleQuestionChange}
-                  placeholder="Write the solution steps..."
-                  rows={4}
-                  disabled={!isAdmin}
-                />
-              </label>
-              <div
-                className="upload-dropzone"
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => handleDrop(event, "image", setQuestionForm)}
-              >
-                <p>Drag & drop solution image (JPG/PNG) here</p>
-                <label className="upload-button">
-                  Upload image
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg"
-                    onChange={(event) => handleImageUpload(event.target.files?.[0], setQuestionForm)}
-                    disabled={!isAdmin}
-                    hidden
-                  />
-                </label>
-                {questionForm.solutionImage && <span>Image ready</span>}
-              </div>
-              <div
-                className="upload-dropzone"
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => handleDrop(event, "video", setQuestionForm)}
-              >
-                <p>Drag & drop solution video (MP4/WebM) here</p>
-                <label className="upload-button">
-                  Upload video
-                  <input
-                    type="file"
-                    accept="video/mp4,video/webm"
-                    onChange={(event) => handleVideoUpload(event.target.files?.[0], setQuestionForm)}
-                    disabled={!isAdmin}
-                    hidden
-                  />
-                </label>
-                {questionForm.solutionVideo && <span>Video ready</span>}
-              </div>
-              <label>
-                Video link (optional)
-                <input
-                  type="text"
-                  name="videoUrl"
-                  value={questionForm.videoUrl}
-                  onChange={handleQuestionChange}
-                  placeholder="https://"
-                  disabled={!isAdmin}
-                />
-              </label>
-              <button className="btn secondary" type="submit" disabled={!isAdmin}>
-                {editingQuestionId ? "Save changes" : "Publish question"}
-              </button>
-            </form>
-
-            <form className="card" onSubmit={handleBlogSubmit}>
-              <div className="card-header-row">
-                <h3>
-                  {editingBlogId ? "Edit Finance Blog / CFA Insight" : "Upload Finance Blog / CFA Insight"}
-                </h3>
-                {editingBlogId && (
-                  <button className="btn ghost" type="button" onClick={resetBlogForm}>
-                    Cancel edit
-                  </button>
-                )}
-              </div>
-              <label>
-                Title
-                <input
-                  type="text"
-                  name="title"
-                  value={blogForm.title}
-                  onChange={handleBlogChange}
-                  placeholder="CFA Level II: Equity multipliers"
-                  disabled={!isAdmin}
-                />
-              </label>
-              <label>
-                Summary
-                <textarea
-                  name="summary"
-                  value={blogForm.summary}
-                  onChange={handleBlogChange}
-                  placeholder="Quick summary to show on the card..."
-                  rows={4}
-                  disabled={!isAdmin}
-                />
-              </label>
-              <label>
-                Read time
-                <input
-                  type="text"
-                  name="readTime"
-                  value={blogForm.readTime}
-                  onChange={handleBlogChange}
-                  placeholder="6 min read"
-                  disabled={!isAdmin}
-                />
-              </label>
-              <label>
-                Solution text
-                <textarea
-                  name="solutionText"
-                  value={blogForm.solutionText}
-                  onChange={handleBlogChange}
-                  placeholder="Write the key takeaways..."
-                  rows={4}
-                  disabled={!isAdmin}
-                />
-              </label>
-              <div
-                className="upload-dropzone"
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => handleDrop(event, "image", setBlogForm)}
-              >
-                <p>Drag & drop solution image (JPG/PNG) here</p>
-                <label className="upload-button">
-                  Upload image
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg"
-                    onChange={(event) => handleImageUpload(event.target.files?.[0], setBlogForm)}
-                    disabled={!isAdmin}
-                    hidden
-                  />
-                </label>
-                {blogForm.solutionImage && <span>Image ready</span>}
-              </div>
-              <div
-                className="upload-dropzone"
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={(event) => handleDrop(event, "video", setBlogForm)}
-              >
-                <p>Drag & drop solution video (MP4/WebM) here</p>
-                <label className="upload-button">
-                  Upload video
-                  <input
-                    type="file"
-                    accept="video/mp4,video/webm"
-                    onChange={(event) => handleVideoUpload(event.target.files?.[0], setBlogForm)}
-                    disabled={!isAdmin}
-                    hidden
-                  />
-                </label>
-                {blogForm.solutionVideo && <span>Video ready</span>}
-              </div>
-              <label>
-                Video link (optional)
-                <input
-                  type="text"
-                  name="videoUrl"
-                  value={blogForm.videoUrl}
-                  onChange={handleBlogChange}
-                  placeholder="https://"
-                  disabled={!isAdmin}
-                />
-              </label>
-              <button className="btn secondary" type="submit" disabled={!isAdmin}>
-                {editingBlogId ? "Save changes" : "Publish insight"}
-              </button>
-            </form>
-          </div>
-        </section>
+          </section>
+        )}
       </main>
 
       <footer className="footer">
@@ -956,7 +1411,14 @@ export default function App() {
               <a href="#insights">CFA Insights</a>
             </li>
             <li>
-              <a href="#admin">Admin Upload</a>
+              <button className="link-button" type="button" onClick={handleOpenInvestment}>
+                Investment Analysis
+              </button>
+            </li>
+            <li>
+              <button className="link-button" type="button" onClick={handleShowAdmin}>
+                Admin Upload
+              </button>
             </li>
           </ul>
         </div>
