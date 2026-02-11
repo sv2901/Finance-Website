@@ -167,6 +167,55 @@ const createEmptyTransaction = () => ({
   type: "buy"
 });
 
+
+const getTodayIsoDate = () => new Date().toISOString().slice(0, 10);
+
+const resolveDateToIso = (value) => {
+  if (!value) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+  if (typeof value === "number") {
+    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+    const result = new Date(excelEpoch.getTime() + value * 24 * 60 * 60 * 1000);
+    if (!Number.isNaN(result.getTime())) return result.toISOString().slice(0, 10);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const asDate = new Date(trimmed);
+    if (!Number.isNaN(asDate.getTime())) return asDate.toISOString().slice(0, 10);
+  }
+  return "";
+};
+
+const normalizeTransactionType = (value) => {
+  const text = String(value || "").toLowerCase();
+  if (text.includes("sale") || text.includes("inflow") || text === "sell") return "sell";
+  return "buy";
+};
+
+const loadXlsxLibrary = (() => {
+  let promise;
+  return async () => {
+    if (!promise) {
+      promise = import("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm");
+    }
+    const module = await promise;
+    return module.default ?? module;
+  };
+})();
+
+const validateSaleConstraints = (cashflows) => {
+  const ordered = [...cashflows].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  const firstSale = ordered.find((item) => item.amount > 0);
+  if (!firstSale) return "Sale Data Required.";
+  if (firstSale.date > getTodayIsoDate()) {
+    return "First sale date must be less than or equal to today.";
+  }
+  return null;
+};
+
 export default function App() {
   const [adminId, setAdminId] = useState("");
   const [adminPin, setAdminPin] = useState("");
@@ -188,6 +237,7 @@ export default function App() {
   const [transactions, setTransactions] = useState([]);
   const [analysisResult, setAnalysisResult] = useState(null);
   const [analysisError, setAnalysisError] = useState("");
+  const [excelError, setExcelError] = useState("");
   const [isBenchmarkLoading, setIsBenchmarkLoading] = useState(false);
 
   const adminEmail = "svgupta4@gmail.com";
@@ -397,6 +447,84 @@ export default function App() {
     setTransactionDraft((prev) => ({ ...prev, [name]: value }));
   };
 
+  const handleDownloadTemplate = async () => {
+    try {
+      const XLSX = await loadXlsxLibrary();
+      const templateRows = [
+        ["Date", "Transaction Type", "Amount (INR)"],
+        ["2024-02-10", "Purchase", 1000000],
+        ["2026-07-10", "Sale", 5000000]
+      ];
+      const workbook = XLSX.utils.book_new();
+      const worksheet = XLSX.utils.aoa_to_sheet(templateRows);
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Transactions");
+      const output = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+      const blob = new Blob([output], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "investment-transactions-template.xlsx";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setExcelError("Unable to generate template file. Please try again.");
+    }
+  };
+
+  const handleExcelUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const XLSX = await loadXlsxLibrary();
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: "array", cellDates: true });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: "" });
+
+      const parsedTransactions = rows
+        .map((row, idx) => {
+          const rawDate = row.Date || row.date || row["Transaction Date"];
+          const isoDate = resolveDateToIso(rawDate);
+          const type = normalizeTransactionType(row["Transaction Type"] || row.Type || row.type);
+          const rawAmount = row["Amount (INR)"] || row.Amount || row.amount;
+          const amountValue = Number.parseFloat(String(rawAmount).replaceAll(",", ""));
+
+          if (!isoDate || !Number.isFinite(amountValue) || amountValue <= 0) return null;
+
+          return {
+            id: `excel-${Date.now()}-${idx}`,
+            date: isoDate,
+            amount: type === "buy" ? -Math.abs(amountValue) : Math.abs(amountValue),
+            type
+          };
+        })
+        .filter(Boolean);
+
+      if (parsedTransactions.length === 0) {
+        setExcelError("No valid rows found in the uploaded file.");
+        return;
+      }
+
+      const saleError = validateSaleConstraints(parsedTransactions);
+      if (saleError) {
+        setExcelError(saleError);
+        return;
+      }
+
+      setTransactions(parsedTransactions);
+      setAnalysisResult(null);
+      setAnalysisError("");
+      setExcelError("");
+    } catch (error) {
+      setExcelError("Unable to read Excel file. Please use the downloaded template format.");
+    } finally {
+      event.target.value = "";
+    }
+  };
+
   const handleAddTransaction = (event) => {
     event.preventDefault();
     if (!transactionDraft.date || !transactionDraft.amount) return;
@@ -431,7 +559,14 @@ export default function App() {
       return;
     }
 
+    const saleError = validateSaleConstraints(orderedTransactions);
+    if (saleError) {
+      setAnalysisError(saleError);
+      return;
+    }
+
     setAnalysisError("");
+    setExcelError("");
     setIsBenchmarkLoading(true);
 
     try {
@@ -500,6 +635,16 @@ export default function App() {
           <section className="section investment-grid">
             <article className="card">
               <h3>Add Transaction</h3>
+              <div className="template-actions">
+                <button className="btn ghost" type="button" onClick={handleDownloadTemplate}>
+                  Download Excel Template
+                </button>
+                <label className="upload-button">
+                  Upload Filled Excel
+                  <input type="file" accept=".xlsx,.xls" onChange={handleExcelUpload} hidden />
+                </label>
+              </div>
+              {excelError && <p className="login-error">{excelError}</p>}
               <form className="investment-form" onSubmit={handleAddTransaction}>
                 <label>
                   Transaction Type
@@ -564,7 +709,7 @@ export default function App() {
               </p>
               {analysisResult && (
                 <p className="card-meta">
-                  Benchmark buy date: {analysisResult.buyDate} • benchmark sell date (first sale): {analysisResult.sellDate}
+                  Benchmark buy dates same as purchase dates. Benchmark Sell date(First Sale): {analysisResult.sellDate}. Idea behind this concept is the user might have a asset class that is not liquid hence cannot end investment on first date but these are commodities which can be sold on regulated markets.
                 </p>
               )}
               {isBenchmarkLoading && <p className="card-meta">Loading market benchmarks…</p>}
@@ -583,8 +728,16 @@ export default function App() {
                 ))}
               </div>
               <p className="card-meta">
-                Market assets are fetched by the backend from public Yahoo Finance data when available. FD and Real Estate are fixed at 7% and 13% annual assumptions.
+                Market assets are fetched by the backend from public Yahoo Finance open-price data when available. If data is unavailable on the target date, the previous available market date is used. FD and Real Estate are fixed at 7% and 13% annual assumptions.
               </p>
+              <div className="decision-legend">
+                <h4>Decision Score Interpretation</h4>
+                <div className="decision-row bad"><span>&lt;25</span><span>Bad Decision</span><span>Capital destruction</span></div>
+                <div className="decision-row avg"><span>25-39</span><span>Average</span><span>Suboptimal Allocation</span></div>
+                <div className="decision-row good"><span>40-69</span><span>Good</span><span>Market-beating allocation</span></div>
+                <div className="decision-row great"><span>70-99</span><span>Great</span><span>Strong alpha generated</span></div>
+                <div className="decision-row ultimate"><span>100</span><span>Ultimate</span><span>Exceptional investment</span></div>
+              </div>
             </article>
           </section>
         </main>

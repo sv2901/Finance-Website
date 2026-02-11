@@ -3,14 +3,12 @@ import http from "node:http";
 const PORT = Number.parseInt(process.env.ANALYSIS_API_PORT || "8787", 10);
 
 const SCORE_BANDS = [
-  { label: "Below", return: 0, score: 0 },
   { label: "FD", return: 7, score: 10 },
   { label: "Nifty", return: 8.65, score: 25 },
   { label: "Real Estate", return: 13, score: 40 },
   { label: "BTC", return: 50.72, score: 55 },
   { label: "Gold", return: 58.77, score: 70 },
-  { label: "Silver", return: 96.63, score: 85 },
-  { label: "Above", return: 999, score: 100 }
+  { label: "Silver", return: 96.63, score: 85 }
 ];
 
 const MARKET_CONFIG = {
@@ -22,21 +20,22 @@ const MARKET_CONFIG = {
 
 const scoreFromReturn = (decisionReturn) => {
   if (decisionReturn == null || Number.isNaN(decisionReturn)) return null;
-  let lower = SCORE_BANDS[0];
-  let upper = SCORE_BANDS[SCORE_BANDS.length - 1];
+  const topBand = SCORE_BANDS[SCORE_BANDS.length - 1];
+
+  if (decisionReturn < SCORE_BANDS[0].return) return 0;
+  if (decisionReturn >= topBand.return) return 100;
 
   for (let idx = 0; idx < SCORE_BANDS.length - 1; idx += 1) {
-    const current = SCORE_BANDS[idx];
-    const next = SCORE_BANDS[idx + 1];
-    if (decisionReturn >= current.return && decisionReturn <= next.return) {
-      lower = current;
-      upper = next;
-      break;
+    const lower = SCORE_BANDS[idx];
+    const upper = SCORE_BANDS[idx + 1];
+    if (decisionReturn >= lower.return && decisionReturn < upper.return) {
+      return Math.round(
+        lower.score + ((decisionReturn - lower.return) / (upper.return - lower.return)) * 15
+      );
     }
   }
 
-  if (upper.return === lower.return) return lower.score;
-  return Math.round(lower.score + ((decisionReturn - lower.return) / (upper.return - lower.return)) * 15);
+  return topBand.score;
 };
 
 const computeXirr = (cashflows, guess = 0.12) => {
@@ -68,20 +67,19 @@ const computeXirr = (cashflows, guess = 0.12) => {
   return null;
 };
 
-const nearestPrice = (prices, targetDate) => {
+const previousOrEqualOpenPrice = (prices, targetDate) => {
   const target = new Date(targetDate).getTime();
-  let closest = null;
-  let closestDiff = Number.POSITIVE_INFINITY;
+  const filtered = prices
+    .filter((point) => Number.isFinite(point.open) && point.time <= target)
+    .sort((a, b) => b.time - a.time);
 
-  prices.forEach((point) => {
-    const diff = Math.abs(point.time - target);
-    if (Number.isFinite(point.close) && diff < closestDiff) {
-      closest = point.close;
-      closestDiff = diff;
-    }
-  });
+  if (filtered.length > 0) return filtered[0].open;
 
-  return closest;
+  const earliestAfter = prices
+    .filter((point) => Number.isFinite(point.open) && point.time > target)
+    .sort((a, b) => a.time - b.time);
+
+  return earliestAfter[0]?.open ?? null;
 };
 
 const fetchYahooHistory = async (symbol, startDate, endDate) => {
@@ -101,11 +99,11 @@ const fetchYahooHistory = async (symbol, startDate, endDate) => {
   const payload = await response.json();
   const result = payload?.chart?.result?.[0];
   const timestamps = result?.timestamp || [];
-  const closes = result?.indicators?.quote?.[0]?.close || [];
+  const opens = result?.indicators?.quote?.[0]?.open || [];
 
-  if (!timestamps.length || !closes.length) throw new Error(`market data missing: ${symbol}`);
+  if (!timestamps.length || !opens.length) throw new Error(`market data missing: ${symbol}`);
 
-  return timestamps.map((time, idx) => ({ time: time * 1000, close: closes[idx] }));
+  return timestamps.map((time, idx) => ({ time: time * 1000, open: opens[idx] }));
 };
 
 const marketXirr = async (asset, buyDate, sellDate) => {
@@ -113,8 +111,8 @@ const marketXirr = async (asset, buyDate, sellDate) => {
 
   try {
     const history = await fetchYahooHistory(symbol, buyDate, sellDate);
-    const buyPrice = nearestPrice(history, buyDate);
-    const sellPrice = nearestPrice(history, sellDate);
+    const buyPrice = previousOrEqualOpenPrice(history, buyDate);
+    const sellPrice = previousOrEqualOpenPrice(history, sellDate);
 
     if (!Number.isFinite(buyPrice) || !Number.isFinite(sellPrice) || buyPrice <= 0 || sellPrice <= 0) {
       throw new Error(`invalid prices: ${asset}`);
@@ -182,21 +180,32 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    const firstBuy = transactions.find((item) => item.amount < 0);
+    const firstSell = transactions.find((item) => item.amount > 0);
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    if (!firstBuy || !firstSell) {
+      sendJson(res, 400, {
+        success: false,
+        message: "Sale Data Required."
+      });
+      return;
+    }
+
+    if (firstSell.date > todayStr) {
+      sendJson(res, 400, {
+        success: false,
+        message: "First sale date must be less than or equal to today."
+      });
+      return;
+    }
+
     const userXirr = computeXirr(transactions);
     if (userXirr == null) {
       sendJson(res, 400, { success: false, message: "Unable to compute XIRR for the provided cashflows." });
       return;
     }
 
-    const firstBuy = transactions.find((item) => item.amount < 0);
-    const firstSell = transactions.find((item) => item.amount > 0);
-    if (!firstBuy || !firstSell) {
-      sendJson(res, 400, {
-        success: false,
-        message: "Cashflows must include at least one purchase (negative) and one sale (positive)."
-      });
-      return;
-    }
 
     const marketRows = await Promise.all([
       marketXirr("BTC", firstBuy.date, firstSell.date),

@@ -637,3 +637,60 @@ select {
 .benchmark-row:nth-child(even) {
   background: #f8fafc;
 }
+
+.template-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.decision-legend {
+  margin-top: 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.decision-legend h4 {
+  background: #0f2f74;
+  color: #f8fafc;
+  padding: 10px 12px;
+  font-size: 1rem;
+}
+
+.decision-row {
+  display: grid;
+  grid-template-columns: 90px 140px 1fr;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.decision-row.bad span:first-child {
+  background: #f87171;
+}
+
+.decision-row.avg span:first-child {
+  background: #facc15;
+}
+
+.decision-row.good span:first-child {
+  background: #38bdf8;
+}
+
+.decision-row.great span:first-child {
+  background: #22c55e;
+}
+
+.decision-row.ultimate span:first-child {
+  background: #a855f7;
+  color: #fff;
+}
+
+.decision-row span:first-child {
+  text-align: center;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 4px 6px;
+}
