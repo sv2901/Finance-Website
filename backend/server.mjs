@@ -13,14 +13,22 @@ const SCORE_BANDS = [
 
 const MARKET_CONFIG = {
   BTC: { provider: "coingecko", symbol: "bitcoin", fallback: 50.72, quoteCurrency: "USD" },
-  Gold: { provider: "twelvedata", symbol: "XAU/USD", fallback: 58.77, quoteCurrency: "USD" },
-  Silver: { provider: "twelvedata", symbol: "XAG/USD", fallback: 96.63, quoteCurrency: "USD" },
-  Nifty: { provider: "twelvedata", symbol: "NIFTY", fallback: 8.65, quoteCurrency: "INR" }
+  Gold: { provider: "twelvedata", symbol: "XAUUSD", fallback: 58.77, quoteCurrency: "USD" },
+  Silver: { provider: "twelvedata", symbol: "XAGUSD", fallback: 96.63, quoteCurrency: "USD" },
+  Nifty: { provider: "twelvedata", symbol: "NSE:NIFTY", fallback: 8.65, quoteCurrency: "INR" }
 };
 
-const USDINR_CONFIG = { provider: "twelvedata", symbol: "USD/INR" };
+const USDINR_CONFIG = { provider: "twelvedata", symbol: "USDINR" };
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const MARKET_HISTORY_CACHE = new Map();
+let hasLoggedApiEnv = false;
+
+const TWELVE_DATA_SYMBOL_CANDIDATES = {
+  XAUUSD: ["XAUUSD", "XAU/USD"],
+  XAGUSD: ["XAGUSD", "XAG/USD"],
+  "NSE:NIFTY": ["NSE:NIFTY", "NIFTY", "NSEI"],
+  USDINR: ["USDINR", "USD/INR"]
+};
 
 const scoreFromReturn = (decisionReturn) => {
   if (decisionReturn == null || Number.isNaN(decisionReturn)) return null;
@@ -90,7 +98,17 @@ const sleep = (ms) => new Promise((resolve) => {
   setTimeout(resolve, ms);
 });
 
-const fetchJsonWithHeaders = async (url) => {
+const logApiEnvOnce = () => {
+  if (hasLoggedApiEnv) return;
+  hasLoggedApiEnv = true;
+  const twelveDataApiKey = process.env.TWELVE_DATA_API_KEY;
+  const redactedKey = twelveDataApiKey
+    ? `${twelveDataApiKey.slice(0, 4)}...${twelveDataApiKey.slice(-2)}`
+    : "undefined";
+  console.log("[market-data] TWELVE_DATA_API_KEY:", redactedKey);
+};
+
+const fetchJsonWithHeaders = async (url, context = "") => {
   const retryDelaysMs = [0, 500, 1200, 2200];
 
   for (let attempt = 0; attempt < retryDelaysMs.length; attempt += 1) {
@@ -106,9 +124,14 @@ const fetchJsonWithHeaders = async (url) => {
 
     if (response.ok) return response.json();
 
+    const responseText = await response.text();
+    console.error(
+      `[market-data] Request failed${context ? ` (${context})` : ""}: status=${response.status} url=${url} body=${responseText.slice(0, 300)}`
+    );
+
     const retryable = [429, 500, 502, 503, 504].includes(response.status);
     if (!retryable || attempt === retryDelaysMs.length - 1) {
-      throw new Error(`HTTP ${response.status}`);
+      throw new Error(`HTTP ${response.status}: ${responseText.slice(0, 180) || "unknown error"}`);
     }
   }
 
@@ -134,33 +157,52 @@ const fetchCoinGeckoHistory = async (coinId, startDate, endDate) => {
 };
 
 const fetchTwelveDataHistory = async (symbol, startDate, endDate) => {
+  logApiEnvOnce();
   const apiKey = process.env.TWELVE_DATA_API_KEY;
   if (!apiKey) throw new Error("TWELVE_DATA_API_KEY is missing");
 
-  const query = new URLSearchParams({
-    symbol,
-    interval: "1day",
-    start_date: toIsoDate(startDate),
-    end_date: toIsoDate(endDate),
-    outputsize: "5000",
-    apikey: apiKey
-  });
+  const symbolCandidates = TWELVE_DATA_SYMBOL_CANDIDATES[symbol] || [symbol];
+  let lastError = "unknown";
 
-  const url = `https://api.twelvedata.com/time_series?${query}`;
-  const payload = await fetchJsonWithHeaders(url);
-  if (payload?.status === "error") {
-    throw new Error(`TwelveData error: ${payload?.message || payload?.code || "unknown"}`);
+  for (const candidateSymbol of symbolCandidates) {
+    try {
+      const query = new URLSearchParams({
+        symbol: candidateSymbol,
+        interval: "1day",
+        start_date: toIsoDate(startDate),
+        end_date: toIsoDate(endDate),
+        outputsize: "5000",
+        apikey: apiKey
+      });
+
+      const url = `https://api.twelvedata.com/time_series?${query}`;
+      const payload = await fetchJsonWithHeaders(url, `twelvedata:${candidateSymbol}`);
+      if (payload?.status === "error") {
+        lastError = payload?.message || payload?.code || "unknown";
+        console.error(`[market-data] TwelveData payload error for ${candidateSymbol}: ${lastError}`);
+        continue;
+      }
+
+      const values = payload?.values || [];
+      if (!values.length) {
+        lastError = "market data missing";
+        console.error(`[market-data] TwelveData returned no values for ${candidateSymbol}`);
+        continue;
+      }
+
+      return values
+        .map((row) => ({
+          time: new Date(row.datetime).getTime(),
+          open: Number.parseFloat(row.open)
+        }))
+        .filter((item) => Number.isFinite(item.time) && Number.isFinite(item.open));
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "request failed";
+      console.error(`[market-data] TwelveData fetch failed for ${candidateSymbol}: ${lastError}`);
+    }
   }
 
-  const values = payload?.values || [];
-  if (!values.length) throw new Error("TwelveData market data missing");
-
-  return values
-    .map((row) => ({
-      time: new Date(row.datetime).getTime(),
-      open: Number.parseFloat(row.open)
-    }))
-    .filter((item) => Number.isFinite(item.time) && Number.isFinite(item.open));
+  throw new Error(`TwelveData error for ${symbol}: ${lastError}`);
 };
 
 const fetchMarketHistory = async (config, startDate, endDate) => {
@@ -203,8 +245,10 @@ const preloadHistories = async (startDate, sellDate) => {
     const cacheKey = `${config.provider}:${config.symbol}`;
     try {
       histories[config.symbol] = await getCachedHistory(cacheKey, config, startDate, sellDate);
-    } catch {
-      histories[config.symbol] = null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "market fetch failed";
+      console.error(`[market-data] Failed to load ${key} (${config.symbol}): ${message}`);
+      histories[config.symbol] = { error: message };
     }
     await sleep(120);
   }
@@ -213,12 +257,13 @@ const preloadHistories = async (startDate, sellDate) => {
 };
 
 const marketXirr = async (asset, purchaseFlows, sellDate, histories) => {
-  const { symbol, fallback, quoteCurrency } = MARKET_CONFIG[asset];
+  const { symbol, quoteCurrency } = MARKET_CONFIG[asset];
 
   try {
     const history = histories[symbol];
     if (!Array.isArray(history) || history.length === 0) {
-      throw new Error(`Market fetch failed for ${symbol}: blocked or provider unavailable`);
+      const historyError = history?.error ? ` (${history.error})` : "";
+      throw new Error(`Market fetch failed for ${symbol}${historyError}`);
     }
     const sellPrice = previousOrEqualOpenPrice(history, sellDate);
 
@@ -275,10 +320,12 @@ const marketXirr = async (asset, purchaseFlows, sellDate, histories) => {
           : `Market data (${symbol})`
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : "market fetch failed";
+    console.error(`[market-data] Benchmark unavailable for ${asset}: ${message}`);
     return {
       asset,
-      xirrPercent: fallback,
-      source: `Fallback benchmark assumption (${error instanceof Error ? error.message : "market fetch failed"})`
+      xirrPercent: null,
+      source: `Market data unavailable (${message})`
     };
   }
 };
@@ -377,7 +424,10 @@ const server = http.createServer(async (req, res) => {
       marketRows.find((row) => row.asset === "BTC"),
       marketRows.find((row) => row.asset === "Gold"),
       marketRows.find((row) => row.asset === "Silver")
-    ].map((row) => ({ ...row, score: scoreFromReturn(row.xirrPercent) }));
+    ].map((row) => ({
+      ...row,
+      score: row.xirrPercent == null ? null : scoreFromReturn(row.xirrPercent)
+    }));
 
     sendJson(res, 200, {
       success: true,

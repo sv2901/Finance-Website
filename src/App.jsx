@@ -642,9 +642,7 @@ export default function App() {
     const orderedTransactions = [...transactions].sort(
       (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
     );
-    const usedFallbackBenchmark = (analysisResult?.benchmarkRows || []).some((row) =>
-      String(row.source || "").toLowerCase().includes("fallback")
-    );
+    const hasUnavailableMarketData = (analysisResult?.benchmarkRows || []).some((row) => row.xirrPercent == null);
 
     return (
       <div className="page">
@@ -759,15 +757,15 @@ export default function App() {
                 {(analysisResult?.benchmarkRows || []).map((row) => (
                   <div className="benchmark-row" key={row.asset}>
                     <span>{row.asset}</span>
-                    <span>{row.xirrPercent.toFixed(2)}%</span>
-                    <span>{row.score}</span>
+                    <span>{row.xirrPercent == null ? "—" : `${row.xirrPercent.toFixed(2)}%`}</span>
+                    <span>{row.score == null ? "—" : row.score}</span>
                     <span className="source-cell">{row.source || "—"}</span>
                   </div>
                 ))}
               </div>
-              {usedFallbackBenchmark && (
+              {hasUnavailableMarketData && (
                 <p className="login-error">
-                  Live market-provider fetch failed for one or more assets, so benchmark test data fallback was used. Check the Source column for per-asset reason.
+                  Market data is temporarily unavailable for one or more assets. Check the Source column for per-asset details.
                 </p>
               )}
               <p className="card-meta">
