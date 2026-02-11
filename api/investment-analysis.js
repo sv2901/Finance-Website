@@ -80,16 +80,33 @@ const previousOrEqualOpenPrice = (prices, targetDate) => {
   return earliestAfter[0]?.open ?? null;
 };
 
-const fetchJsonWithHeaders = async (url) => {
-  const response = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      Accept: "application/json,text/plain,*/*"
-    }
-  });
+const sleep = (ms) => new Promise((resolve) => {
+  setTimeout(resolve, ms);
+});
 
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json();
+const fetchJsonWithHeaders = async (url) => {
+  const retryDelaysMs = [0, 350, 800, 1500];
+
+  for (let attempt = 0; attempt < retryDelaysMs.length; attempt += 1) {
+    if (retryDelaysMs[attempt] > 0) await sleep(retryDelaysMs[attempt]);
+
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "application/json,text/plain,*/*",
+        "Accept-Language": "en-US,en;q=0.9"
+      }
+    });
+
+    if (response.ok) return response.json();
+
+    const retryable = [429, 500, 502, 503, 504].includes(response.status);
+    if (!retryable || attempt === retryDelaysMs.length - 1) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+  }
+
+  throw new Error("HTTP request failed after retries");
 };
 
 const fetchYahooHistory = async (symbol, startDate, endDate) => {
@@ -142,20 +159,21 @@ const fetchYahooHistory = async (symbol, startDate, endDate) => {
   throw new Error(`Yahoo Finance fetch failed for ${symbol}: ${lastError?.message || "unknown error"}`);
 };
 
-const marketXirr = async (asset, purchaseFlows, sellDate) => {
+const marketXirr = async (asset, purchaseFlows, sellDate, histories) => {
   const { symbol, fallback, quoteCurrency } = MARKET_CONFIG[asset];
 
   try {
-    const buyDates = purchaseFlows.map((item) => item.date);
-    const earliestBuyDate = buyDates.reduce((min, date) => (date < min ? date : min), buyDates[0]);
-    const history = await fetchYahooHistory(symbol, earliestBuyDate, sellDate);
+    const history = histories[symbol];
+    if (!Array.isArray(history) || history.length === 0) {
+      throw new Error(`Yahoo Finance fetch failed for ${symbol}: HTTP 429 or blocked`);
+    }
     const sellPrice = previousOrEqualOpenPrice(history, sellDate);
 
     if (!Number.isFinite(sellPrice) || sellPrice <= 0) throw new Error(`invalid sell price: ${asset}`);
 
-    let fxHistory = null;
-    if (quoteCurrency === "USD") {
-      fxHistory = await fetchYahooHistory(USDINR_SYMBOL, earliestBuyDate, sellDate);
+    const fxHistory = quoteCurrency === "USD" ? histories[USDINR_SYMBOL] : null;
+    if (quoteCurrency === "USD" && (!Array.isArray(fxHistory) || fxHistory.length === 0)) {
+      throw new Error(`Yahoo Finance fetch failed for ${USDINR_SYMBOL}: HTTP 429 or blocked`);
     }
 
     let units = 0;
@@ -266,13 +284,25 @@ export default async function handler(req, res) {
 
 
     const purchaseFlows = transactions.filter((item) => item.amount < 0);
+    const buyDates = purchaseFlows.map((item) => item.date);
+    const earliestBuyDate = buyDates.reduce((min, date) => (date < min ? date : min), buyDates[0]);
 
-    const marketRows = await Promise.all([
-      marketXirr("BTC", purchaseFlows, firstSell.date),
-      marketXirr("Gold", purchaseFlows, firstSell.date),
-      marketXirr("Silver", purchaseFlows, firstSell.date),
-      marketXirr("Nifty", purchaseFlows, firstSell.date)
-    ]);
+    const histories = {};
+    const symbolsToLoad = ["BTC-USD", "GC=F", "SI=F", "^NSEI", USDINR_SYMBOL];
+
+    for (const symbol of symbolsToLoad) {
+      try {
+        histories[symbol] = await fetchYahooHistory(symbol, earliestBuyDate, firstSell.date);
+      } catch {
+        histories[symbol] = null;
+      }
+      await sleep(120);
+    }
+
+    const marketRows = [];
+    for (const asset of ["BTC", "Gold", "Silver", "Nifty"]) {
+      marketRows.push(await marketXirr(asset, purchaseFlows, firstSell.date, histories));
+    }
 
     const benchmarkRows = [
       { asset: "FD", xirrPercent: 7, source: "Fixed benchmark assumption" },
