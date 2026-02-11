@@ -625,8 +625,10 @@ select {
 .benchmark-head,
 .benchmark-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: 0.8fr 0.7fr 0.5fr 2fr;
   padding: 10px 14px;
+  gap: 8px;
+  align-items: center;
 }
 
 .benchmark-head {
@@ -718,6 +720,24 @@ select {
   }
 
   .decision-grid span:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+.source-cell {
+  font-size: 0.78rem;
+  line-height: 1.2;
+  color: #475569;
+}
+
+@media (max-width: 900px) {
+  .benchmark-head,
+  .benchmark-row {
+    grid-template-columns: 0.8fr 0.7fr 0.5fr;
+  }
+
+  .benchmark-head span:last-child,
+  .benchmark-row span:last-child {
     grid-column: 1 / -1;
   }
 }

@@ -642,6 +642,9 @@ export default function App() {
     const orderedTransactions = [...transactions].sort(
       (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
     );
+    const usedFallbackBenchmark = (analysisResult?.benchmarkRows || []).some((row) =>
+      String(row.source || "").toLowerCase().includes("fallback")
+    );
 
     return (
       <div className="page">
@@ -751,17 +754,24 @@ export default function App() {
                   <span>Asset</span>
                   <span>XIRR</span>
                   <span>Score</span>
+                  <span>Source</span>
                 </div>
                 {(analysisResult?.benchmarkRows || []).map((row) => (
                   <div className="benchmark-row" key={row.asset}>
                     <span>{row.asset}</span>
                     <span>{row.xirrPercent.toFixed(2)}%</span>
                     <span>{row.score}</span>
+                    <span className="source-cell">{row.source || "—"}</span>
                   </div>
                 ))}
               </div>
+              {usedFallbackBenchmark && (
+                <p className="login-error">
+                  Live Yahoo Finance fetch failed for one or more assets, so benchmark test data fallback was used. Check the Source column for per-asset reason.
+                </p>
+              )}
               <p className="card-meta">
-                Market assets are fetched by the backend from public Yahoo Finance open-price data when available. If data is unavailable on the target date, the previous available market date is used. FD and Real Estate are fixed at 7% and 13% annual assumptions.
+                Market assets are fetched by the backend from public Yahoo Finance open-price data when available. If data is unavailable on the target date, the previous available market date is used. USD-quoted assets are converted INR↔USD using Yahoo INR=X data. FD and Real Estate are fixed at 7% and 13% annual assumptions.
               </p>
               <div className="decision-legend">
                 <h4>Decision Score Interpretation</h4>

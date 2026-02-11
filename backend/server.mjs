@@ -99,31 +99,47 @@ const fetchJsonWithHeaders = async (url) => {
 const fetchYahooHistory = async (symbol, startDate, endDate) => {
   const start = Math.floor(new Date(startDate).getTime() / 1000) - 3 * 24 * 60 * 60;
   const end = Math.floor(new Date(endDate).getTime() / 1000) + 3 * 24 * 60 * 60;
-  const query = new URLSearchParams({
-    period1: String(start),
-    period2: String(end),
-    interval: "1d",
-    events: "history"
-  });
+
+  const queryVariants = [
+    new URLSearchParams({
+      period1: String(start),
+      period2: String(end),
+      interval: "1d",
+      events: "history"
+    }),
+    new URLSearchParams({
+      range: "10y",
+      interval: "1d",
+      events: "history"
+    })
+  ];
 
   const hosts = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
   let lastError = null;
 
   for (const host of hosts) {
-    try {
-      const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?${query}`;
-      const payload = await fetchJsonWithHeaders(url);
-      const result = payload?.chart?.result?.[0];
-      const chartError = payload?.chart?.error;
-      if (chartError) throw new Error(`${chartError?.description || chartError?.code || "unknown"}`);
+    for (const query of queryVariants) {
+      try {
+        const url = `https://${host}/v8/finance/chart/${encodeURIComponent(symbol)}?${query}`;
+        const payload = await fetchJsonWithHeaders(url);
+        const result = payload?.chart?.result?.[0];
+        const chartError = payload?.chart?.error;
+        if (chartError) throw new Error(`${chartError?.description || chartError?.code || "unknown"}`);
 
-      const timestamps = result?.timestamp || [];
-      const opens = result?.indicators?.quote?.[0]?.open || [];
-      if (!timestamps.length || !opens.length) throw new Error("market data missing");
+        const timestamps = result?.timestamp || [];
+        const opens = result?.indicators?.quote?.[0]?.open || [];
+        if (!timestamps.length || !opens.length) throw new Error("market data missing");
 
-      return timestamps.map((time, idx) => ({ time: time * 1000, open: opens[idx] }));
-    } catch (error) {
-      lastError = error;
+        const rows = timestamps
+          .map((time, idx) => ({ time: time * 1000, open: opens[idx] }))
+          .filter((item) => Number.isFinite(item.open))
+          .filter((item) => item.time >= start - 365 * 24 * 60 * 60 * 1000 && item.time <= end + 365 * 24 * 60 * 60 * 1000);
+
+        if (!rows.length) throw new Error("market data missing in date window");
+        return rows;
+      } catch (error) {
+        lastError = error;
+      }
     }
   }
 
