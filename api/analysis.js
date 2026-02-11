@@ -1,14 +1,3 @@
-import dotenv from "dotenv";
-import path from "path";
-
-dotenv.config({
-  path: path.join(process.cwd(), ".env"),
-});
-
-import http from "node:http";
-
-const PORT = Number.parseInt(process.env.ANALYSIS_API_PORT || "8787", 10);
-
 const SCORE_BANDS = [
   { label: "FD", return: 7, score: 10 },
   { label: "Nifty", return: 8.65, score: 25 },
@@ -27,13 +16,13 @@ const MARKET_CONFIG = {
   },
   Gold: {
     provider: "twelvedata",
-    symbol: "GLD",
+    symbol: "XAUUSD",
     fallback: 58.77,
     quoteCurrency: "USD",
   },
   Silver: {
     provider: "twelvedata",
-    symbol: "SLV",
+    symbol: "XAGUSD",
     fallback: 96.63,
     quoteCurrency: "USD",
   },
@@ -48,12 +37,12 @@ const MARKET_CONFIG = {
 const USDINR_CONFIG = { provider: "twelvedata", symbol: "USDINR" };
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const MARKET_HISTORY_CACHE = new Map();
-const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 let hasLoggedApiEnv = false;
 
 const TWELVE_DATA_SYMBOL_CANDIDATES = {
-  GLD: ["GLD"],
-  SLV: ["SLV"],
+  XAUUSD: ["XAUUSD", "XAU/USD"],
+  XAGUSD: ["XAGUSD", "XAG/USD"],
+  "NSE:NIFTY": ["NSE:NIFTY", "NIFTY", "NSEI"],
   USDINR: ["USDINR", "USD/INR"],
 };
 
@@ -187,7 +176,7 @@ const fetchCoinGeckoHistory = async (coinId, startDate, endDate) => {
   const from =
     Math.floor(new Date(startDate).getTime() / 1000) - 2 * 24 * 60 * 60;
   const to = Math.floor(new Date(endDate).getTime() / 1000) + 2 * 24 * 60 * 60;
-  const url = `https://api.coingecko.com/api/v3/coins/${encodeURIComponent(coinId)}/market_chart?vs_currency=usd&days=365`;
+  const url = `https://api.coingecko.com/api/v3/coins/${encodeURIComponent(coinId)}/market_chart/range?vs_currency=usd&from=${from}&to=${to}`;
   const payload = await fetchJsonWithHeaders(url);
   const prices = payload?.prices || [];
   if (!prices.length) throw new Error("CoinGecko market data missing");
@@ -261,41 +250,11 @@ const fetchMarketHistory = async (config, startDate, endDate) => {
   if (config.provider === "coingecko") {
     return fetchCoinGeckoHistory(config.symbol, startDate, endDate);
   }
-  if (config.provider === "yahoo") {
-    const period1 = Math.floor(new Date(startDate).getTime() / 1000);
-    const end = new Date(endDate);
-    end.setDate(end.getDate() + 1); // add 1 day
-    const period2 = Math.floor(end.getTime() / 1000);
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${config.symbol}?interval=1d&period1=${period1}&period2=${period2}`;
-    const response = await fetch(url);
-    const json = await response.json();
-    if (!json.chart || json.chart.error) {
-      throw new Error(
-        `Yahoo fetch failed: ${json.chart?.error?.description || "unknown error"}`,
-      );
-    }
-    const result = json.chart.result?.[0];
-
-    if (!result) throw new Error("Yahoo returned no results");
-
-    const timestamps = result.timestamp;
-    const prices = result.indicators.quote[0].close;
-
-    const rows = timestamps
-      .map((ts, i) => ({
-        time: ts * 1000, // ⭐ THIS is what your engine expects
-        open: prices[i],
-      }))
-      .filter((r) => Number.isFinite(r.open));
-    console.log("YAHOO SYMBOL:", config.symbol);
-    console.log("FIRST ROW:", rows[0]);
-    console.log("LAST ROW:", rows[rows.length - 1]);
-    console.log("SELL DATE:", endDate);
-    return rows;
-  }
-
   if (config.provider === "twelvedata") {
     return fetchTwelveDataHistory(config.symbol, startDate, endDate);
+  }
+  if (config.provider === "yahoo") {
+    return fetchYahooHistory(config.symbol, startDate, endDate);
   }
   throw new Error(`Unknown provider: ${config.provider}`);
 };
@@ -303,8 +262,7 @@ const fetchMarketHistory = async (config, startDate, endDate) => {
 const getCachedHistory = async (cacheKey, config, startDate, endDate) => {
   const now = Date.now();
   const cached = MARKET_HISTORY_CACHE.get(cacheKey);
-
-  if (cached && now - cached.fetchedAt < CACHE_TTL) {
+  if (cached && now - cached.fetchedAt <= CACHE_TTL_MS) {
     return cached.rows;
   }
 
@@ -434,55 +392,34 @@ const marketXirr = async (asset, purchaseFlows, sellDate, histories) => {
   }
 };
 
-const sendJson = (res, statusCode, payload) => {
-  res.writeHead(statusCode, {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
-  });
-  res.end(JSON.stringify(payload));
-};
+export default async function handler(req, res) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-const parseBody = (req) =>
-  new Promise((resolve, reject) => {
-    let raw = "";
-    req.on("data", (chunk) => {
-      raw += chunk;
-    });
-    req.on("end", () => {
-      try {
-        resolve(raw ? JSON.parse(raw) : {});
-      } catch {
-        reject(new Error("Invalid JSON"));
-      }
-    });
-    req.on("error", reject);
-  });
-
-const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
-    sendJson(res, 200, { ok: true });
+    res.status(200).json({ ok: true });
     return;
   }
 
-  if (req.method !== "POST" || req.url !== "/api/investment-analysis") {
-    sendJson(res, 404, { success: false, message: "Not found" });
+  if (req.method !== "POST") {
+    res.status(405).json({ success: false, message: "Method not allowed" });
     return;
   }
 
   try {
-    const body = await parseBody(req);
-    const transactions = [...(body.transactions || [])]
+    const transactions = [...(req.body?.transactions || [])]
       .filter((item) => item?.date && Number.isFinite(Number(item.amount)))
       .map((item) => ({ date: item.date, amount: Number(item.amount) }))
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     if (transactions.length < 2) {
-      sendJson(res, 400, {
-        success: false,
-        message: "Add at least one purchase and one sale transaction.",
-      });
+      res
+        .status(400)
+        .json({
+          success: false,
+          message: "Add at least one purchase and one sale transaction.",
+        });
       return;
     }
 
@@ -491,7 +428,7 @@ const server = http.createServer(async (req, res) => {
     const todayStr = new Date().toISOString().slice(0, 10);
 
     if (!firstBuy || !firstSell) {
-      sendJson(res, 400, {
+      res.status(400).json({
         success: false,
         message: "Sale Data Required.",
       });
@@ -499,7 +436,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (firstSell.date > todayStr) {
-      sendJson(res, 400, {
+      res.status(400).json({
         success: false,
         message: "First sale date must be less than or equal to today.",
       });
@@ -508,10 +445,12 @@ const server = http.createServer(async (req, res) => {
 
     const userXirr = computeXirr(transactions);
     if (userXirr == null) {
-      sendJson(res, 400, {
-        success: false,
-        message: "Unable to compute XIRR for the provided cashflows.",
-      });
+      res
+        .status(400)
+        .json({
+          success: false,
+          message: "Unable to compute XIRR for the provided cashflows.",
+        });
       return;
     }
 
@@ -547,7 +486,7 @@ const server = http.createServer(async (req, res) => {
       score: row.xirrPercent == null ? null : scoreFromReturn(row.xirrPercent),
     }));
 
-    sendJson(res, 200, {
+    res.status(200).json({
       success: true,
       data: {
         buyDate: firstBuy.date,
@@ -558,13 +497,8 @@ const server = http.createServer(async (req, res) => {
       },
     });
   } catch (error) {
-    sendJson(res, 500, {
-      success: false,
-      message: error.message || "Server error",
-    });
+    res
+      .status(500)
+      .json({ success: false, message: error.message || "Server error" });
   }
-});
-
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Investment analysis API listening on http://0.0.0.0:${PORT}`);
-});
+}
