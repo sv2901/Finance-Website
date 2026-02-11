@@ -159,15 +159,13 @@ const getDefaultAnalysisApiUrl = () => {
 };
 
 const resolveAnalysisApiUrl = () => {
-  const configuredUrl = import.meta.env.VITE_ANALYSIS_API_URL?.trim();
-  if (!configuredUrl) return getDefaultAnalysisApiUrl();
-
   if (typeof window !== "undefined") {
     const isLocalhost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-    const pointsToLocalhost = configuredUrl.includes("localhost") || configuredUrl.includes("127.0.0.1");
-    if (!isLocalhost && pointsToLocalhost) return "/api/investment-analysis";
+    if (!isLocalhost) return "/api/investment-analysis";
   }
 
+  const configuredUrl = import.meta.env.VITE_ANALYSIS_API_URL?.trim();
+  if (!configuredUrl) return getDefaultAnalysisApiUrl();
   return configuredUrl;
 };
 
@@ -615,8 +613,11 @@ export default function App() {
     try {
       const response = await fetch(ANALYSIS_API_URL, {
         method: "POST",
+        cache: "no-store",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache"
         },
         body: JSON.stringify({ transactions: orderedTransactions })
       });
