@@ -82,6 +82,21 @@ const previousOrEqualOpenPrice = (prices, targetDate) => {
   return earliestAfter[0]?.open ?? null;
 };
 
+const fetchJsonWithHeaders = async (url) => {
+  const response = await fetch(url, {
+    headers: {
+      "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      Accept: "application/json,text/plain,*/*"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return response.json();
+};
+
 const fetchYahooHistory = async (symbol, startDate, endDate) => {
   const start = Math.floor(new Date(startDate).getTime() / 1000) - 3 * 24 * 60 * 60;
   const end = Math.floor(new Date(endDate).getTime() / 1000) + 3 * 24 * 60 * 60;
@@ -93,11 +108,12 @@ const fetchYahooHistory = async (symbol, startDate, endDate) => {
   });
 
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?${query}`;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`market fetch failed: ${symbol}`);
-
-  const payload = await response.json();
+  const payload = await fetchJsonWithHeaders(url);
   const result = payload?.chart?.result?.[0];
+  const chartError = payload?.chart?.error;
+  if (chartError) {
+    throw new Error(`Yahoo Finance error for ${symbol}: ${chartError?.description || chartError?.code || "unknown"}`);
+  }
   const timestamps = result?.timestamp || [];
   const opens = result?.indicators?.quote?.[0]?.open || [];
 

@@ -650,6 +650,7 @@ select {
   border: 1px solid #cbd5e1;
   border-radius: 12px;
   overflow: hidden;
+  background: #ffffff;
 }
 
 .decision-legend h4 {
@@ -659,38 +660,57 @@ select {
   font-size: 1rem;
 }
 
-.decision-row {
+.decision-grid {
   display: grid;
-  grid-template-columns: 90px 140px 1fr;
+  grid-template-columns: 140px 1fr 1.4fr;
   gap: 10px;
   padding: 10px 12px;
   border-top: 1px solid #e2e8f0;
+  align-items: center;
 }
 
-.decision-row.bad span:first-child {
-  background: #f87171;
+.decision-grid-head {
+  background: #f1f5f9;
+  font-weight: 700;
 }
 
-.decision-row.avg span:first-child {
-  background: #facc15;
-}
-
-.decision-row.good span:first-child {
-  background: #38bdf8;
-}
-
-.decision-row.great span:first-child {
-  background: #22c55e;
-}
-
-.decision-row.ultimate span:first-child {
-  background: #a855f7;
-  color: #fff;
-}
-
-.decision-row span:first-child {
+.score-cell {
   text-align: center;
   font-weight: 700;
   border-radius: 8px;
-  padding: 4px 6px;
+  padding: 6px;
+  color: #0f172a;
+}
+
+.score-cell.bad {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.score-cell.avg {
+  background: #facc15;
+}
+
+.score-cell.good {
+  background: #38bdf8;
+}
+
+.score-cell.great {
+  background: #22c55e;
+  color: #ffffff;
+}
+
+.score-cell.ultimate {
+  background: #9333ea;
+  color: #ffffff;
+}
+
+@media (max-width: 900px) {
+  .decision-grid {
+    grid-template-columns: 100px 1fr;
+  }
+
+  .decision-grid span:last-child {
+    grid-column: 1 / -1;
+  }
 }

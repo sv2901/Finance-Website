@@ -183,6 +183,37 @@ const resolveDateToIso = (value) => {
   if (typeof value === "string") {
     const trimmed = value.trim();
     if (!trimmed) return "";
+
+    const ddmmyyyy = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    if (ddmmyyyy) {
+      const day = Number(ddmmyyyy[1]);
+      const month = Number(ddmmyyyy[2]);
+      const year = Number(ddmmyyyy[3]);
+      const parsed = new Date(Date.UTC(year, month - 1, day));
+      if (
+        parsed.getUTCFullYear() === year
+        && parsed.getUTCMonth() === month - 1
+        && parsed.getUTCDate() === day
+      ) {
+        return parsed.toISOString().slice(0, 10);
+      }
+    }
+
+    const yyyymmdd = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+    if (yyyymmdd) {
+      const year = Number(yyyymmdd[1]);
+      const month = Number(yyyymmdd[2]);
+      const day = Number(yyyymmdd[3]);
+      const parsed = new Date(Date.UTC(year, month - 1, day));
+      if (
+        parsed.getUTCFullYear() === year
+        && parsed.getUTCMonth() === month - 1
+        && parsed.getUTCDate() === day
+      ) {
+        return parsed.toISOString().slice(0, 10);
+      }
+    }
+
     const asDate = new Date(trimmed);
     if (!Number.isNaN(asDate.getTime())) return asDate.toISOString().slice(0, 10);
   }
@@ -489,10 +520,10 @@ export default function App() {
           const rawDate = row.Date || row.date || row["Transaction Date"];
           const isoDate = resolveDateToIso(rawDate);
           const type = normalizeTransactionType(row["Transaction Type"] || row.Type || row.type);
-          const rawAmount = row["Amount (INR)"] || row.Amount || row.amount;
+          const rawAmount = row["Amount (INR)"] ?? row.Amount ?? row.amount;
           const amountValue = Number.parseFloat(String(rawAmount).replaceAll(",", ""));
 
-          if (!isoDate || !Number.isFinite(amountValue) || amountValue <= 0) return null;
+          if (!isoDate || !Number.isFinite(amountValue) || amountValue === 0) return null;
 
           return {
             id: `excel-${Date.now()}-${idx}`,
@@ -586,7 +617,9 @@ export default function App() {
       setAnalysisResult(payload.data);
     } catch (error) {
       setAnalysisError(
-        "Unable to run backend analysis right now. Ensure the investment analysis server is running."
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to run backend analysis right now. Ensure the investment analysis server is running."
       );
     } finally {
       setIsBenchmarkLoading(false);
@@ -732,11 +765,36 @@ export default function App() {
               </p>
               <div className="decision-legend">
                 <h4>Decision Score Interpretation</h4>
-                <div className="decision-row bad"><span>&lt;25</span><span>Bad Decision</span><span>Capital destruction</span></div>
-                <div className="decision-row avg"><span>25-39</span><span>Average</span><span>Suboptimal Allocation</span></div>
-                <div className="decision-row good"><span>40-69</span><span>Good</span><span>Market-beating allocation</span></div>
-                <div className="decision-row great"><span>70-99</span><span>Great</span><span>Strong alpha generated</span></div>
-                <div className="decision-row ultimate"><span>100</span><span>Ultimate</span><span>Exceptional investment</span></div>
+                <div className="decision-grid decision-grid-head">
+                  <span>Decision Score</span>
+                  <span>Category</span>
+                  <span>Meaning</span>
+                </div>
+                <div className="decision-grid">
+                  <span className="score-cell bad">&lt;25</span>
+                  <span>Bad Decision</span>
+                  <span>Capital destruction</span>
+                </div>
+                <div className="decision-grid">
+                  <span className="score-cell avg">25-39</span>
+                  <span>Average</span>
+                  <span>Suboptimal Allocation</span>
+                </div>
+                <div className="decision-grid">
+                  <span className="score-cell good">40-69</span>
+                  <span>Good</span>
+                  <span>Market-beating allocation</span>
+                </div>
+                <div className="decision-grid">
+                  <span className="score-cell great">70-99</span>
+                  <span>Great</span>
+                  <span>Strong alpha generated</span>
+                </div>
+                <div className="decision-grid">
+                  <span className="score-cell ultimate">100</span>
+                  <span>Ultimate</span>
+                  <span>Exceptional investment</span>
+                </div>
               </div>
             </article>
           </section>
