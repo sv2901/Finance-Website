@@ -11,12 +11,12 @@ const MARKET_CONFIG = {
   BTC: { provider: "coingecko", symbol: "bitcoin", fallback: 50.72, quoteCurrency: "USD" },
   Gold: { provider: "twelvedata", symbol: "GLD", fallback: 58.77, quoteCurrency: "USD" },
   Silver: { provider: "twelvedata", symbol: "SLV", fallback: 96.63, quoteCurrency: "USD" },
-  Nifty: { provider: "stooq", symbol: "^NSEI", fallback: 8.65, quoteCurrency: "INR" }
+  Nifty: { provider: "stooq", symbol: "NIFTY", fallback: 8.65, quoteCurrency: "INR" }
 };
 
 const USDINR_CONFIG = { provider: "twelvedata", symbol: "USDINR" };
 const CACHE_TTL_MS = 10 * 60 * 1000;
-const MARKET_ENGINE_VERSION = "2026-02-12-nifty-stooq-alpha-v3";
+const MARKET_ENGINE_VERSION = "2026-02-12-nifty-symbol-clean-v4";
 const MARKET_HISTORY_CACHE = new Map();
 let hasLoggedApiEnv = false;
 
@@ -279,7 +279,6 @@ const fetchNiftyHistory = async (startDate, endDate) => {
 
   const alphaSymbols = [
     process.env.ALPHA_VANTAGE_NIFTY_SYMBOL?.trim(),
-    "NIFTY",
     "NIFTY50"
   ].filter(Boolean);
 
@@ -292,7 +291,7 @@ const fetchNiftyHistory = async (startDate, endDate) => {
     }
   }
 
-  const twelveDataSymbols = ["NIFTY", "NSEI"];
+  const twelveDataSymbols = ["NIFTY"];
   for (const candidate of twelveDataSymbols) {
     try {
       return await fetchTwelveDataHistory(candidate, startDate, endDate);
