@@ -15,12 +15,12 @@ const MARKET_CONFIG = {
   BTC: { provider: "coingecko", symbol: "bitcoin", fallback: 50.72, quoteCurrency: "USD" },
   Gold: { provider: "twelvedata", symbol: "GLD", fallback: 58.77, quoteCurrency: "USD" },
   Silver: { provider: "twelvedata", symbol: "SLV", fallback: 96.63, quoteCurrency: "USD" },
-  Nifty: { provider: "stooq", symbol: "NIFTY", fallback: 8.65, quoteCurrency: "INR" }
+  Nifty: { provider: "alphavantage", symbol: "NSE:NIFTY50", fallback: 8.65, quoteCurrency: "INR" }
 };
 
 const USDINR_CONFIG = { provider: "twelvedata", symbol: "USDINR" };
 const CACHE_TTL_MS = 10 * 60 * 1000;
-const MARKET_ENGINE_VERSION = "2026-02-12-nifty-symbol-clean-v4";
+const MARKET_ENGINE_VERSION = "2026-02-12-nifty-alpha-primary-v5";
 const MARKET_HISTORY_CACHE = new Map();
 let hasLoggedApiEnv = false;
 
@@ -270,7 +270,7 @@ const fetchStooqHistory = async () => {
   return rows;
 };
 
-const fetchNiftyHistory = async (startDate, endDate) => {
+const fetchNiftyHistory = async (symbol, startDate, endDate) => {
   let lastError = "unknown";
 
   try {
@@ -283,7 +283,10 @@ const fetchNiftyHistory = async (startDate, endDate) => {
 
   const alphaSymbols = [
     process.env.ALPHA_VANTAGE_NIFTY_SYMBOL?.trim(),
-    "NIFTY50"
+    symbol,
+    "NSE:NIFTY50",
+    "NIFTY50",
+    "NIFTY"
   ].filter(Boolean);
 
   for (const symbol of alphaSymbols) {
@@ -312,8 +315,8 @@ const fetchMarketHistory = async (config, startDate, endDate) => {
   if (config.provider === "coingecko") {
     return fetchCoinGeckoHistory(config.symbol, startDate, endDate);
   }
-  if (config.provider === "stooq") {
-    return fetchNiftyHistory(startDate, endDate);
+  if (config.provider === "alphavantage") {
+    return fetchNiftyHistory(config.symbol, startDate, endDate);
   }
   if (config.provider === "twelvedata") {
     return fetchTwelveDataHistory(config.symbol, startDate, endDate);
