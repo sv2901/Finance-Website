@@ -151,15 +151,25 @@ const readFileAsDataUrl = (file) =>
 
 
 const getDefaultAnalysisApiUrl = () => {
-  if (typeof window === "undefined") return "http://localhost:8787/api/investment-analysis";
+  if (typeof window === "undefined") return "http://localhost:8787/api/analysis";
   const isLocalhost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
   return isLocalhost
-    ? "http://localhost:8787/api/investment-analysis"
-    : "/api/investment-analysis";
+    ? "http://localhost:8787/api/analysis"
+    : "/api/analysis";
 };
 
-const ANALYSIS_API_URL =
-  import.meta.env.VITE_ANALYSIS_API_URL?.trim() || getDefaultAnalysisApiUrl();
+const resolveAnalysisApiUrl = () => {
+  if (typeof window !== "undefined") {
+    const isLocalhost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
+    if (!isLocalhost) return "/api/analysis";
+  }
+
+  const configuredUrl = import.meta.env.VITE_ANALYSIS_API_URL?.trim();
+  if (!configuredUrl) return getDefaultAnalysisApiUrl();
+  return configuredUrl;
+};
+
+const ANALYSIS_API_URL = resolveAnalysisApiUrl();
 
 const createEmptyTransaction = () => ({
   date: "",
@@ -603,8 +613,11 @@ export default function App() {
     try {
       const response = await fetch(ANALYSIS_API_URL, {
         method: "POST",
+        cache: "no-store",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache"
         },
         body: JSON.stringify({ transactions: orderedTransactions })
       });
@@ -769,8 +782,11 @@ export default function App() {
                 </p>
               )}
               <p className="card-meta">
-                Market assets are fetched by the backend from provider APIs (CoinGecko/Twelve Data) with 15-minute caching. If data is unavailable on the target date, the previous available market date is used. USD-quoted assets are converted INR↔USD using USD/INR provider data. FD and Real Estate are fixed at 7% and 13% annual assumptions.
+                Market assets are fetched by the backend from provider APIs (CoinGecko/Twelve Data/Yahoo) with 10-minute caching. If data is unavailable on the target date, the previous available market date is used. USD-quoted assets are converted INR↔USD using USD/INR provider data. FD and Real Estate are fixed at 7% and 13% annual assumptions.
               </p>
+              {analysisResult?.engineVersion && (
+                <p className="card-meta">Analysis engine version: {analysisResult.engineVersion}</p>
+              )}
               <div className="decision-legend">
                 <h4>Decision Score Interpretation</h4>
                 <div className="decision-grid decision-grid-head">

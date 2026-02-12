@@ -1,3 +1,7 @@
+import http from "node:http";
+
+const PORT = Number.parseInt(process.env.ANALYSIS_API_PORT || "8787", 10);
+
 const SCORE_BANDS = [
   { label: "FD", return: 7, score: 10 },
   { label: "Nifty", return: 8.65, score: 25 },
@@ -347,32 +351,55 @@ const marketXirr = async (asset, purchaseFlows, sellDate, histories) => {
   }
 };
 
-export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Cache-Control", "no-store, max-age=0, must-revalidate");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
+const sendJson = (res, statusCode, payload) => {
+  res.writeHead(statusCode, {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Cache-Control": "no-store, max-age=0, must-revalidate",
+    Pragma: "no-cache",
+    Expires: "0"
+  });
+  res.end(JSON.stringify(payload));
+};
 
+const parseBody = (req) =>
+  new Promise((resolve, reject) => {
+    let raw = "";
+    req.on("data", (chunk) => {
+      raw += chunk;
+    });
+    req.on("end", () => {
+      try {
+        resolve(raw ? JSON.parse(raw) : {});
+      } catch {
+        reject(new Error("Invalid JSON"));
+      }
+    });
+    req.on("error", reject);
+  });
+
+const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
-    res.status(200).json({ ok: true });
+    sendJson(res, 200, { ok: true });
     return;
   }
 
-  if (req.method !== "POST") {
-    res.status(405).json({ success: false, message: "Method not allowed" });
+  if (req.method !== "POST" || req.url !== "/api/analysis") {
+    sendJson(res, 404, { success: false, message: "Not found" });
     return;
   }
 
   try {
-    const transactions = [...(req.body?.transactions || [])]
+    const body = await parseBody(req);
+    const transactions = [...(body.transactions || [])]
       .filter((item) => item?.date && Number.isFinite(Number(item.amount)))
       .map((item) => ({ date: item.date, amount: Number(item.amount) }))
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     if (transactions.length < 2) {
-      res.status(400).json({ success: false, message: "Add at least one purchase and one sale transaction." });
+      sendJson(res, 400, { success: false, message: "Add at least one purchase and one sale transaction." });
       return;
     }
 
@@ -381,7 +408,7 @@ export default async function handler(req, res) {
     const todayStr = new Date().toISOString().slice(0, 10);
 
     if (!firstBuy || !firstSell) {
-      res.status(400).json({
+      sendJson(res, 400, {
         success: false,
         message: "Sale Data Required."
       });
@@ -389,7 +416,7 @@ export default async function handler(req, res) {
     }
 
     if (firstSell.date > todayStr) {
-      res.status(400).json({
+      sendJson(res, 400, {
         success: false,
         message: "First sale date must be less than or equal to today."
       });
@@ -398,7 +425,7 @@ export default async function handler(req, res) {
 
     const userXirr = computeXirr(transactions);
     if (userXirr == null) {
-      res.status(400).json({ success: false, message: "Unable to compute XIRR for the provided cashflows." });
+      sendJson(res, 400, { success: false, message: "Unable to compute XIRR for the provided cashflows." });
       return;
     }
 
@@ -426,7 +453,7 @@ export default async function handler(req, res) {
       score: row.xirrPercent == null ? null : scoreFromReturn(row.xirrPercent)
     }));
 
-    res.status(200).json({
+    sendJson(res, 200, {
       success: true,
       data: {
         buyDate: firstBuy.date,
@@ -438,6 +465,10 @@ export default async function handler(req, res) {
       }
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message || "Server error" });
+    sendJson(res, 500, { success: false, message: error.message || "Server error" });
   }
-}
+});
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`Investment analysis API listening on http://0.0.0.0:${PORT}`);
+});

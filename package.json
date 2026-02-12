@@ -4,13 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"npm run analysis-api\" \"vite --host 0.0.0.0 --port 4173\"",
-    "analysis-api": "node backend/server.mjs",
+    "dev": "vite --host 0.0.0.0 --port 4173",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 4173"
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "analysis-api": "node backend/server.mjs"
   },
   "dependencies": {
-    "dotenv": "^17.2.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
