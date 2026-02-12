@@ -782,7 +782,7 @@ export default function App() {
                 </p>
               )}
               <p className="card-meta">
-                Market assets are fetched by the backend from provider APIs (CoinGecko/Twelve Data/Yahoo) with 10-minute caching. If data is unavailable on the target date, the previous available market date is used. USD-quoted assets are converted INR↔USD using USD/INR provider data. FD and Real Estate are fixed at 7% and 13% annual assumptions.
+                Market assets are fetched by the backend from provider APIs (CoinGecko/Twelve Data/Stooq/AlphaVantage) with 10-minute caching. If data is unavailable on the target date, the previous available market date is used. USD-quoted assets are converted INR↔USD using USD/INR provider data. FD and Real Estate are fixed at 7% and 13% annual assumptions.
               </p>
               {analysisResult?.engineVersion && (
                 <p className="card-meta">Analysis engine version: {analysisResult.engineVersion}</p>
