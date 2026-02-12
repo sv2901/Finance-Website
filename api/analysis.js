@@ -11,12 +11,12 @@ const MARKET_CONFIG = {
   BTC: { provider: "coingecko", symbol: "bitcoin", fallback: 50.72, quoteCurrency: "USD" },
   Gold: { provider: "twelvedata", symbol: "GLD", fallback: 58.77, quoteCurrency: "USD" },
   Silver: { provider: "twelvedata", symbol: "SLV", fallback: 96.63, quoteCurrency: "USD" },
-  Nifty: { provider: "yahoo", symbol: "^NSEI", fallback: 8.65, quoteCurrency: "INR" }
+  Nifty: { provider: "stooq", symbol: "^NSEI", fallback: 8.65, quoteCurrency: "INR" }
 };
 
 const USDINR_CONFIG = { provider: "twelvedata", symbol: "USDINR" };
 const CACHE_TTL_MS = 10 * 60 * 1000;
-const MARKET_ENGINE_VERSION = "2026-02-12-nifty-fallback-v2";
+const MARKET_ENGINE_VERSION = "2026-02-12-nifty-stooq-alpha-v3";
 const MARKET_HISTORY_CACHE = new Map();
 let hasLoggedApiEnv = false;
 
@@ -216,29 +216,33 @@ const parseStooqCsv = (text) => {
     .filter((item) => Number.isFinite(item.time) && Number.isFinite(item.open));
 };
 
-const fetchYahooHistory = async (symbol, startDate, endDate) => {
-  const period1 = Math.floor(new Date(startDate).getTime() / 1000);
-  const end = new Date(endDate);
-  end.setDate(end.getDate() + 1);
-  const period2 = Math.floor(end.getTime() / 1000);
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&period1=${period1}&period2=${period2}`;
-  const payload = await fetchJsonWithHeaders(url, `yahoo:${symbol}`);
+const fetchAlphaVantageHistory = async (symbol = "NIFTY") => {
+  const apiKey = process.env.ALPHA_VANTAGE_API_KEY;
+  if (!apiKey) throw new Error("ALPHA_VANTAGE_API_KEY is missing");
 
-  if (!payload?.chart || payload.chart.error) {
-    throw new Error(`Yahoo fetch failed: ${payload?.chart?.error?.description || "unknown error"}`);
-  }
+  const query = new URLSearchParams({
+    function: "TIME_SERIES_DAILY",
+    symbol,
+    outputsize: "full",
+    apikey: apiKey
+  });
 
-  const result = payload.chart.result?.[0];
-  if (!result) throw new Error("Yahoo returned no results");
+  const url = `https://www.alphavantage.co/query?${query}`;
+  const payload = await fetchJsonWithHeaders(url, `alphavantage:${symbol}`);
 
-  const timestamps = result.timestamp || [];
-  const prices = result.indicators?.quote?.[0]?.close || [];
+  if (payload?.Note) throw new Error(`AlphaVantage limit: ${payload.Note}`);
+  if (payload?.Information) throw new Error(`AlphaVantage info: ${payload.Information}`);
+  if (payload?.["Error Message"]) throw new Error(`AlphaVantage error: ${payload["Error Message"]}`);
 
-  const rows = timestamps
-    .map((ts, index) => ({ time: Number(ts) * 1000, open: Number(prices[index]) }))
+  const series = payload?.["Time Series (Daily)"] || {};
+  const rows = Object.entries(series)
+    .map(([date, values]) => ({
+      time: new Date(date).getTime(),
+      open: Number.parseFloat(values?.["1. open"])
+    }))
     .filter((item) => Number.isFinite(item.time) && Number.isFinite(item.open));
 
-  if (!rows.length) throw new Error("Yahoo returned empty price rows");
+  if (!rows.length) throw new Error("AlphaVantage returned empty price rows");
   return rows;
 };
 
@@ -263,24 +267,29 @@ const fetchStooqHistory = async () => {
 };
 
 const fetchNiftyHistory = async (startDate, endDate) => {
-  const yahooSymbols = ["^NSEI", "NSEI"];
   let lastError = "unknown";
-
-  for (const yahooSymbol of yahooSymbols) {
-    try {
-      return await fetchYahooHistory(yahooSymbol, startDate, endDate);
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : "Yahoo request failed";
-      console.error(`[market-data] Nifty Yahoo attempt failed (${yahooSymbol}): ${lastError}`);
-    }
-  }
 
   try {
     return await fetchStooqHistory();
   } catch (error) {
     const stooqError = error instanceof Error ? error.message : "Stooq request failed";
     console.error(`[market-data] Nifty Stooq attempt failed: ${stooqError}`);
-    lastError = `${lastError}; ${stooqError}`;
+    lastError = stooqError;
+  }
+
+  const alphaSymbols = [
+    process.env.ALPHA_VANTAGE_NIFTY_SYMBOL?.trim(),
+    "NIFTY",
+    "NIFTY50"
+  ].filter(Boolean);
+
+  for (const symbol of alphaSymbols) {
+    try {
+      return await fetchAlphaVantageHistory(symbol);
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "AlphaVantage request failed";
+      console.error(`[market-data] Nifty AlphaVantage attempt failed (${symbol}): ${lastError}`);
+    }
   }
 
   const twelveDataSymbols = ["NIFTY", "NSEI"];
@@ -300,7 +309,7 @@ const fetchMarketHistory = async (config, startDate, endDate) => {
   if (config.provider === "coingecko") {
     return fetchCoinGeckoHistory(config.symbol, startDate, endDate);
   }
-  if (config.provider === "yahoo") {
+  if (config.provider === "stooq") {
     return fetchNiftyHistory(startDate, endDate);
   }
   if (config.provider === "twelvedata") {
