@@ -150,26 +150,7 @@ const readFileAsDataUrl = (file) =>
   });
 
 
-const getDefaultAnalysisApiUrl = () => {
-  if (typeof window === "undefined") return "http://localhost:8787/api/analysis";
-  const isLocalhost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-  return isLocalhost
-    ? "http://localhost:8787/api/analysis"
-    : "/api/analysis";
-};
-
-const resolveAnalysisApiUrl = () => {
-  if (typeof window !== "undefined") {
-    const isLocalhost = ["localhost", "127.0.0.1"].includes(window.location.hostname);
-    if (!isLocalhost) return "/api/analysis";
-  }
-
-  const configuredUrl = import.meta.env.VITE_ANALYSIS_API_URL?.trim();
-  if (!configuredUrl) return getDefaultAnalysisApiUrl();
-  return configuredUrl;
-};
-
-const ANALYSIS_API_URL = resolveAnalysisApiUrl();
+const ANALYSIS_API_URL = "/api/analysis";
 
 const createEmptyTransaction = () => ({
   date: "",
@@ -673,7 +654,8 @@ export default function App() {
             <h1>Financial Analysis XIRR Benchmarking</h1>
             <p className="subtitle">
               Add purchase and sale cashflows, compute your XIRR, and benchmark against FD,
-              Real Estate, BTC, Gold, Silver, and Nifty over the same date range.
+              Real Estate, BTC, Gold, Silver, and US Equity markets over the same date range.
+
             </p>
           </div>
         </header>
@@ -756,7 +738,8 @@ export default function App() {
               </p>
               {analysisResult && (
                 <p className="card-meta">
-                  Benchmark buy dates same as purchase dates. Benchmark Sell date(First Sale): {analysisResult.sellDate}. Idea behind this concept is the user might have a asset class that is not liquid hence cannot end investment on first date but these are commodities which can be sold on regulated markets.
+                  Benchmark buy dates same as purchase dates. Benchmark Sell date(First Sale): {analysisResult.sellDate}. Idea behind this concept is that some investments may be illiquid, but benchmark assets like equities and commodities can be sold easily on regulated markets.
+
                 </p>
               )}
               {isBenchmarkLoading && <p className="card-meta">Loading market benchmarks…</p>}
@@ -782,7 +765,7 @@ export default function App() {
                 </p>
               )}
               <p className="card-meta">
-                Market assets are fetched by the backend from provider APIs (CoinGecko/Twelve Data/Yahoo) with 10-minute caching. If data is unavailable on the target date, the previous available market date is used. USD-quoted assets are converted INR↔USD using USD/INR provider data. FD and Real Estate are fixed at 7% and 13% annual assumptions.
+                Market assets are fetched by the backend from provider APIs (CoinGecko/Twelve Data).
               </p>
               {analysisResult?.engineVersion && (
                 <p className="card-meta">Analysis engine version: {analysisResult.engineVersion}</p>
